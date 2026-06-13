@@ -83,7 +83,7 @@
     .model-tag input[type="checkbox"] { pointer-events:none; transform:scale(0.6); margin:0 2px 0 0; }
     .history-item { border-bottom:1px solid rgba(255,255,255,0.04); font-size:11px; }
     .history-item:last-child { border-bottom:none; }
-    .history-scroll { max-height:75vh; overflow-y:auto; }
+    .history-scroll { max-height:75vh; overflow-y:auto; width:100%; padding:0 2rem; }
     .history-scroll::-webkit-scrollbar { width:5px; }
     .history-scroll::-webkit-scrollbar-track { background:rgba(255,255,255,0.03); border-radius:2px; }
     .history-scroll::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.15); border-radius:2px; }
@@ -149,7 +149,7 @@
     <defs id="glass-defs"></defs>
   </svg>
 
-  <div class="container pt-2">
+  <div class="container-fluid pt-2">
   <div class="row justify-content-center">
   <div class="dashboard-container col-11">
     <div class="card sticky-top p-0" style="top:0;z-index:100" data-glass>
@@ -801,7 +801,9 @@
       const start = usagePage * usagePerPage;
       const page = usageDays.slice(start, start + usagePerPage);
       const totalPages = Math.ceil(usageDays.length / usagePerPage);
-      container.innerHTML = `<table style="width:100%;table-layout:fixed;border-collapse:collapse;font-size:11px"><colgroup><col style="width:15%"><col style="width:35%"><col style="width:35%"><col style="width:15%"></colgroup><thead><tr style="font-size:10px;color:rgba(255,255,255,0.6);border-bottom:1px solid rgba(255,255,255,0.08)"><th style="font-weight:600;padding:3px 1rem;text-align:left">${escapeHtml(t('header_date','Date'))}</th><th style="font-weight:600;padding:3px 0 3px 0;text-align:center">${escapeHtml(t('header_requests','Requests'))}</th><th style="font-weight:600;padding:3px 1rem;text-align:right">${escapeHtml(t('header_tokens','Tokens'))}</th><th style="font-weight:600;padding:3px 1rem;text-align:right">${escapeHtml(t('header_cached_pct','Cached%'))}</th></tr></thead><tbody>` +
+      const hdr = 'font-size:10px;color:rgba(255,255,255,0.6);font-weight:600;';
+const cellR = 'font-weight:600;font-variant-numeric:tabular-nums;color:#fff;';
+container.innerHTML = `<div style="width:100%;font-size:11px;white-space:nowrap"><div style="display:flex;${hdr}border-bottom:1px solid rgba(255,255,255,0.08);padding:4px 0 2px 0"><span style="flex:1 1 0;text-align:left;padding-right:1rem">${escapeHtml(t('header_date','Date'))}</span><span style="flex:1 1 0;text-align:center">${escapeHtml(t('header_requests','Requests'))}</span><span style="flex:1 1 0;text-align:right;display:flex;justify-content:flex-end;gap:0.8rem"><span>${escapeHtml(t('header_tokens','Tokens'))}</span><span style="min-width:3em">${escapeHtml(t('header_cached_pct','Cache%'))}</span></span></div>` +
         page.map(d => {
           const tokens = (d.tokens_in||0)+(d.tokens_out||0);
           const cached = (d.tokens_cached_read||d.tokens_cached||0);
@@ -809,8 +811,8 @@
           const day = (d.bucket||d.timestamp||d.date||d.time||'').substring(0,10);
           const inputTokens = (d.tokens_in||0) || tokens;
           const pct = inputTokens > 0 ? ((cached/inputTokens)*100).toFixed(0) + '%' : '';
-          return `<tr class="history-item"><td style="padding:3px 1rem;color:rgba(255,255,255,0.5)">${escapeHtml(day)}</td><td style="padding:3px 0 3px 0;text-align:center;font-weight:600;font-variant-numeric:tabular-nums;color:#fff">${reqs.toLocaleString()}</td><td style="padding:3px 1rem;text-align:right;font-weight:600;font-variant-numeric:tabular-nums;color:#fff">${tokens.toLocaleString()}</td><td style="padding:3px 1rem;text-align:right;font-weight:600;font-variant-numeric:tabular-nums;color:#fff">${pct}</td></tr>`;
-        }).join('') + '</tbody></table>';
+          return `<div style="display:flex;padding:2px 0"><span style="flex:1 1 0;text-align:left;color:rgba(255,255,255,0.5);padding-right:1rem">${escapeHtml(day)}</span><span style="flex:1 1 0;text-align:center;${cellR}">${reqs.toLocaleString()}</span><span style="flex:1 1 0;text-align:right;display:flex;justify-content:flex-end;gap:0.8rem;${cellR}"><span>${tokens.toLocaleString()}</span><span style="min-width:3em">${pct}</span></span></div>`;
+        }).join('') + '</div>';
       document.getElementById('usagePagination').innerHTML =
         `<button class="btn btn-outline-action btn-sm" onclick="usagePage=Math.max(0,usagePage-1);renderUsagePage()" ${usagePage===0?'disabled':''}><i class="bi bi-chevron-left"></i></button>` +
         `<span style="font-size:11px;color:rgba(255,255,255,0.6);padding:0 8px">${t('page_n_of_m','{p}/{m}').replace('{p}', usagePage+1).replace('{m}', totalPages)}</span>` +

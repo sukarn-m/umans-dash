@@ -140,7 +140,7 @@ let responseCache = new ResponseCache();
 
 function loadConfig() {
   const configPath = path.join(__dirname, '.config', 'config.json');
-  let rawConfig = {
+  let   rawConfig = {
     LISTEN_ADDR: '127.0.0.1:8084',
     UPSTREAM_BASE_URL: UMANS_API_BASE,
     REQUEST_TIMEOUT: '15m',
@@ -148,6 +148,7 @@ function loadConfig() {
     CACHE_MAX_SIZE: 100,
     CACHE_ENABLED: true,
     OVERRIDE_CONCURRENCY: 0,
+    MAX_IMAGES: 9,
   };
   if (fs.existsSync(configPath)) {
     try {
@@ -163,6 +164,7 @@ function loadConfig() {
   if (process.env.CACHE_MAX_SIZE) rawConfig.CACHE_MAX_SIZE = parseInt(process.env.CACHE_MAX_SIZE);
   if (process.env.CACHE_ENABLED) rawConfig.CACHE_ENABLED = process.env.CACHE_ENABLED !== 'false';
   if (process.env.OVERRIDE_CONCURRENCY) rawConfig.OVERRIDE_CONCURRENCY = parseInt(process.env.OVERRIDE_CONCURRENCY);
+  if (process.env.MAX_IMAGES) rawConfig.MAX_IMAGES = parseInt(process.env.MAX_IMAGES);
 
   const requestTimeout = parseDuration(rawConfig.REQUEST_TIMEOUT);
   if (!rawConfig.LISTEN_ADDR) throw new Error('LISTEN_ADDR cannot be empty');
@@ -191,9 +193,10 @@ function loadConfig() {
     email: rawConfig.EMAIL || '',
     password: rawConfig.PASSWORD || '',
     appSession: rawConfig.APP_SESSION || '',
-    wallpaperSource: rawConfig.wallpaperSource || 'none',
+    wallpaperSource: rawConfig.wallpaperSource || 'freegen',
     freegenPrompt: rawConfig.FREEGEN_PROMPT || 'epic cinematic landscape, mountains at sunset, vibrant colors, ultra detailed, 16:9 wallpaper',
     overrideConcurrency: Math.max(0, rawConfig.OVERRIDE_CONCURRENCY || 0),
+    maxImages: Math.max(1, rawConfig.MAX_IMAGES || 9),
     locale: rawConfig.LOCALE || null,
   };
 }
@@ -238,7 +241,7 @@ function saveConfig(cfg) {
     EMAIL: cfg.email || '',
     PASSWORD: cfg.password || '',
     APP_SESSION: cfg.appSession || '',
-    wallpaperSource: cfg.wallpaperSource || 'none',
+    wallpaperSource: cfg.wallpaperSource || 'freegen',
     FREEGEN_PROMPT: cfg.freegenPrompt || 'epic cinematic landscape, mountains at sunset, vibrant colors, ultra detailed, 16:9 wallpaper',
     OVERRIDE_CONCURRENCY: cfg.overrideConcurrency || 0,
     LOCALE: cfg.locale || null,
@@ -1131,6 +1134,34 @@ function stripReasoningContent(payload) {
   }
 }
 
+function limitImagesInMessages(payload, maxImages) {
+  if (!maxImages || maxImages <= 0) return;
+  const msgs = payload?.messages;
+  if (!Array.isArray(msgs)) return;
+
+  // Trim image_url/image parts across the entire conversation history, keeping the newest ones.
+  const imageParts = [];
+  for (let mi = 0; mi < msgs.length; mi++) {
+    const m = msgs[mi];
+    if (m.role === 'system' || typeof m.content !== 'object' || !Array.isArray(m.content)) continue;
+    for (let pi = 0; pi < m.content.length; pi++) {
+      const part = m.content[pi];
+      if (part && (part.type === 'image_url' || part.type === 'image')) {
+        imageParts.push({ m, pi, time: mi });
+      }
+    }
+  }
+
+  if (imageParts.length <= maxImages) return;
+
+  // Oldest messages have the smallest index; delete their image parts first.
+  const toRemove = imageParts.length - maxImages;
+  for (let i = 0; i < toRemove; i++) {
+    const { m, pi } = imageParts[i];
+    m.content.splice(pi, 1);
+  }
+}
+
 function stampSessionLabel(payload, name, sessNum) {
   const msgs = payload?.messages;
   if (!Array.isArray(msgs)) return;
@@ -1737,6 +1768,7 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
 
   if (!skipLabel) stampSessionLabel(payload, slot.name, sessNum);
   stripReasoningContent(payload);
+  limitImagesInMessages(payload, config.maxImages);
 
   const cacheEnabled = config.cacheEnabled && !payload.stream;
   let ck;
@@ -1942,6 +1974,7 @@ async function handleRequest(req, res) {
         cacheMaxSize: config.cacheMaxSize,
         cacheTtl: config.cacheTtl,
         overrideConcurrency: config.overrideConcurrency,
+        maxImages: config.maxImages,
         wallpaperSource: config.wallpaperSource,
         freegenPrompt: config.freegenPrompt || '',
       };
@@ -1962,6 +1995,7 @@ async function handleRequest(req, res) {
         if (newConfig.wallpaperSource !== undefined) config.wallpaperSource = newConfig.wallpaperSource;
         if (typeof newConfig.freegenPrompt === 'string') config.freegenPrompt = newConfig.freegenPrompt;
         if (newConfig.overrideConcurrency !== undefined) config.overrideConcurrency = Math.max(0, newConfig.overrideConcurrency);
+        if (typeof newConfig.maxImages !== 'undefined') config.maxImages = Math.max(1, newConfig.maxImages);
         if (Array.isArray(newConfig.keys)) {
           config.keys = newConfig.keys;
           keyPool = new KeyPool(config.keys.filter(k => k.key));

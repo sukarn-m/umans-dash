@@ -30,7 +30,7 @@ UMANS-PROXY/
 - `APP_BASE` — `https://app.umans.ai`
 - `IS_BUN` — Detected at runtime (`typeof Bun !== 'undefined'`)
 - `RUNTIME_VERSION` — Bun or Node version string
-- `loadConfig()` — Loads `.config/config.json` with env var overrides (`LISTEN_ADDR`, `UPSTREAM_BASE_URL`, `REQUEST_TIMEOUT`, `UMANS_API_KEY`, `API_KEYS`, `CACHE_TTL`, `CACHE_MAX_SIZE`, `CACHE_ENABLED`, `OVERRIDE_CONCURRENCY`, `FREEGEN_PROMPT`)
+- `loadConfig()` — Loads `.config/config.json` with env var overrides (`LISTEN_ADDR`, `UPSTREAM_BASE_URL`, `REQUEST_TIMEOUT`, `UMANS_API_KEY`, `API_KEYS`, `CACHE_TTL`, `CACHE_MAX_SIZE`, `CACHE_ENABLED`, `OVERRIDE_CONCURRENCY`, `FREEGEN_PROMPT`, `MAX_IMAGES`)
 - `saveConfig()` / `debouncedSaveConfig()` — Writes config (debounced 500ms)
 - `parseDuration()` — Parses strings like `15m`, `6h`, `30s` to ms
 - `maskToken(key)` — Masks an API key for display as `prefix...suffix`
@@ -102,7 +102,7 @@ Normalizes JSON Schema in tools to handle `$ref`, `$defs`, `definitions`, nullab
 - `handleModels` — OpenAI-format model list from `config.enabledModels`
 - `processQueue()` — Dequeues from `requestQueue` while `activeRequests < limit`
 - `handleChatCompletions` — Parses body, queues or executes via `proxyChatRequest`
-- `proxyChatRequest` — Full proxy pipeline: key acquire → session label → reasoning strip → cache check → model resolve → tool normalize → rate limit → upstream call → title-output sanitize (for title prompts) → stream/non-stream response. The full request body of the first request in a new session is logged to the console.
+- `proxyChatRequest` — Full proxy pipeline: key acquire → session label → reasoning strip → image-attachment limit (`limitImagesInMessages`) → cache check → model resolve → tool normalize → rate limit → upstream call → title-output sanitize (for title prompts) → stream/non-stream response. The full request body of the first request in a new session is logged to the console.
 - `validateApiKey()` — Calls `getUserInfo()`, populates `userInfoCache` + `modelDisplayNameMap`, returns boolean
 
 ### 10. Request Router (proxy.js:963-1341)
@@ -272,8 +272,9 @@ The proxy integrates [FreeGen.app](https://freegen.app/) as a background source.
 
 ### Configuration
 
-- Config key `FREEGEN_PROMPT` / env var `FREEGEN_PROMPT` — default prompt.
-- Dashboard exposes `freegenPrompt` in `/api/config` and persists it on change.
+- Config key `FREEGEN_PROMPT` / env var `FREEGEN_PROMPT` — default prompt used when `wallpaperSource` is `freegen`.
+- Config key `wallpaperSource` — one of `none`, `bing`, `wallhaven`, or `freegen`.
+- Dashboard exposes `freegenPrompt` and `wallpaperSource` in `/api/config` and persists them on change.
 
 ## Testing
 
@@ -294,7 +295,7 @@ Zero external npm dependencies — uses only Node.js built-in modules: `fs`, `pa
 
 ## Data Storage
 
-- `.config/config.json` — Full proxy config including API keys, enabled models, display names, EMAIL/PASSWORD, APP_SESSION, OVERRIDE_CONCURRENCY, wallpaperSource, FREEGEN_PROMPT
+- `.config/config.json` — Full proxy config including API keys, enabled models, display names, EMAIL/PASSWORD, APP_SESSION, OVERRIDE_CONCURRENCY, MAX_IMAGES, wallpaperSource, FREEGEN_PROMPT
 - `.cache/wallpaper.jpg` — Cached Bing wallpaper
 - `.cache/wallpaper-haven.jpg` — Cached Wallhaven wallpaper
 - `.cache/wallpaper-freegen.jpg` — Current FreeGen AI wallpaper
