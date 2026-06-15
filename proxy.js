@@ -9,10 +9,77 @@ const crypto = require('crypto');
 const UMANS_API_BASE = 'https://api.code.umans.ai/v1';
 const API_KEY_ENV_VAR = 'UMANS_API_KEY';
 const APP_BASE = 'https://app.umans.ai';
+const MODELS_DEV_CATALOG_URL = 'https://models.dev/api.json';
 
 const FREEGEN_PROMPT_SIGNER = 'https://prompt-signer.freegen.app/api/test';
 const FREEGEN_IMAGE_GENERATOR = 'https://image-generator.freegen.app/api/test';
 const FREEGEN_WS_BRIDGE = 'wss://websocket-bridge.freegen.app/ws';
+
+let ERROR_LOG_FILE = null;
+const ERROR_LOG_DIR = '.logs';
+
+function initErrorLogger() {
+  if (ERROR_LOG_FILE) return;
+  const dir = path.join(__dirname, ERROR_LOG_DIR);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  ERROR_LOG_FILE = path.join(dir, `errors-${ts}.log`);
+}
+
+function redactHeaders(headers) {
+  const sensitive = new Set(['authorization', 'x-api-key', 'cookie', 'set-cookie', 'api-key']);
+  const out = {};
+  for (const [k, v] of Object.entries(headers || {})) {
+    const low = k.toLowerCase();
+    if (sensitive.has(low) || low.includes('auth') || low.includes('token') || low.includes('key') || low.includes('password') || low.includes('secret')) {
+      out[k] = '[REDACTED]';
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+function redactBodyJson(body) {
+  try {
+    if (!body || typeof body !== 'string') return body;
+    const parsed = JSON.parse(body);
+    function walk(o) {
+      if (!o || typeof o !== 'object') return o;
+      if (Array.isArray(o)) return o.map(walk);
+      const out = {};
+      for (const [k, v] of Object.entries(o)) {
+        const low = k.toLowerCase();
+        if (low === 'api_key' || low === 'apikey' || low.includes('token') || low.includes('password') || low.includes('secret') || low.includes('authorization')) {
+          out[k] = '[REDACTED]';
+        } else if (k === 'messages' && Array.isArray(v)) {
+          out[k] = v.map(walk);
+        } else if (k === 'content' && typeof v === 'string' && v.length > 2000) {
+          out[k] = v.slice(0, 2000) + '...[truncated]';
+        } else if (typeof v === 'object') {
+          out[k] = walk(v);
+        } else {
+          out[k] = v;
+        }
+      }
+      return out;
+    }
+    return JSON.stringify(walk(parsed), null, 2);
+  } catch (e) {
+    return body;
+  }
+}
+
+const ERROR_LOG_LOCK = Promise.resolve();
+async function logHttpError(record) {
+  initErrorLogger();
+  await ERROR_LOG_LOCK;
+  const line = JSON.stringify({
+    ts: new Date().toISOString(),
+    ...record,
+  }, null, 2);
+  fs.appendFileSync(ERROR_LOG_FILE, `--- HTTP ERROR ---\n${line}\n\n`);
+}
 
 const IS_BUN = typeof Bun !== 'undefined';
 const RUNTIME_VERSION = IS_BUN ? Bun.version : process.version.replace('v', '');
@@ -57,6 +124,10 @@ let modelCatalogCacheTime = 0;
 let modelDisplayNameMap = {};
 let modelInfoMap = {};
 const MODEL_CATALOG_CACHE_TTL = 5 * 60 * 1000;
+
+let modelsDevCache = null;
+let modelsDevCacheTime = 0;
+const MODELS_DEV_CACHE_TTL = 5 * 60 * 1000;
 
 let opencodeConfigPathsCache = null;
 let opencodeConfigPathsCacheTime = 0;
@@ -1266,31 +1337,120 @@ async function getCatalogData() {
   return data;
 }
 
-async function searchModels(query, filters = {}) {
-  const data = await getCatalogData();
-  let results = [];
-  if (Array.isArray(data.data)) {
-    results = data.data;
-  } else if (data && typeof data === 'object') {
-    results = Object.entries(data).map(([id, info]) => ({
-      id,
-      object: 'model',
-      ...info,
-      display_name: info.display_name ? info.display_name.replace(/^Umans\s+/i, '') : (id || '').replace(/^umans-/i, ''),
-    }));
+async function fetchModelsDevCatalog() {
+  const resp = await fetch(MODELS_DEV_CATALOG_URL, {
+    method: 'GET',
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return await resp.json();
+}
+
+async function getModelsDevCatalog() {
+  if (modelsDevCache && Date.now() - modelsDevCacheTime < MODELS_DEV_CACHE_TTL) {
+    return modelsDevCache;
   }
-  if (query) {
-    const q = query.toLowerCase();
-    results = results.filter(m => (m.id || '').toLowerCase().includes(q));
+  try {
+    const data = await fetchModelsDevCatalog();
+    modelsDevCache = data;
+    modelsDevCacheTime = Date.now();
+    return data;
+  } catch (e) {
+    console.log(`[Models.dev] Catalog fetch failed: ${e.message}`);
+    return null;
   }
-  if (filters.family) {
-    const fam = filters.family.toLowerCase();
-    results = results.filter(m => {
-      const id = (m.id || '').toLowerCase();
-      return id.startsWith(fam) || id.includes('-' + fam) || id.includes(fam + '-');
-    });
+}
+
+function deriveModelsDevId(umansId) {
+  // UMANS exposes models as e.g. "umans-kimi-k2.6" or "umans-glm-5.1".
+  // models.dev has a dedicated "umans-ai" provider where the model id is
+  // identical to the UMANS id. For other cases the model-id often matches
+  // the suffix after the "umans-" prefix.
+  return umansId.replace(/^umans-/, '');
+}
+
+function umansIdCandidates(umansId) {
+  // Generate the possible model IDs we should look up in models.dev.
+  const candidates = [umansId]; // exact umans-ai id
+  const base = deriveModelsDevId(umansId);
+  if (base !== umansId) candidates.push(base);
+  return candidates;
+}
+
+function findModelsDevEntry(catalog, umansId) {
+  if (!catalog || typeof catalog !== 'object') return null;
+  const candidates = umansIdCandidates(umansId);
+
+  // UMANS-specific models are present in models.dev under the "umans-ai"
+  // provider with the exact same id (e.g. "umans-kimi-k2.7"). Prefer that.
+  if (catalog['umans-ai'] && catalog['umans-ai'].models) {
+    for (const candidate of candidates) {
+      const model = catalog['umans-ai'].models[candidate];
+      if (model) {
+        return { providerId: 'umans-ai', modelId: candidate, model };
+      }
+    }
   }
-  return { object: 'list', data: results };
+
+  // Prefer canonical providers so we get the most authoritative metadata.
+  const canonicalProviders = [
+    'openai', 'anthropic', 'google', 'mistral', 'meta', 'xai', 'deepseek',
+    'moonshotai', 'zhipuai', 'alibaba', 'nvidia', 'cohere', 'minimax',
+    'stepfun', 'xiaomi',
+  ];
+  for (const providerId of canonicalProviders) {
+    const provider = catalog[providerId];
+    if (!provider || typeof provider !== 'object' || !provider.models) continue;
+    for (const candidate of candidates) {
+      const model = provider.models[candidate];
+      if (model) {
+        return { providerId, modelId: candidate, model };
+      }
+    }
+  }
+  // Fallback: scan every provider's models for an id that equals a candidate.
+  for (const [providerId, provider] of Object.entries(catalog)) {
+    if (!provider || typeof provider !== 'object' || !provider.models) continue;
+    for (const candidate of candidates) {
+      const model = provider.models[candidate];
+      if (model) {
+        return { providerId, modelId: candidate, model };
+      }
+    }
+  }
+  // Last resort: match by nested model.id field.
+  for (const [providerId, provider] of Object.entries(catalog)) {
+    if (!provider || typeof provider !== 'object' || !provider.models) continue;
+    for (const [modelId, model] of Object.entries(provider.models)) {
+      if (model && candidates.includes(model.id)) {
+        return { providerId, modelId, model };
+      }
+    }
+  }
+  return null;
+}
+
+function parseLevels(raw) {
+  if (Array.isArray(raw)) return raw.filter(v => typeof v === 'string' && v.length > 0);
+  if (typeof raw === 'string') return raw.split(/\s+/).filter(Boolean);
+  return [];
+}
+
+function inferReasoningModeFromCapabilities(reasoningCaps) {
+  if (!reasoningCaps || typeof reasoningCaps !== 'object') return null;
+  if (reasoningCaps.supported === true) return true;
+  const levels = parseLevels(reasoningCaps.levels);
+  if (levels.length > 0) return true;
+  return null;
+}
+
+function resolveReasoningMode(devEntry, reasoningCaps) {
+  if (devEntry && Array.isArray(devEntry.model.reasoning_options) && devEntry.model.reasoning_options.length > 0) {
+    return true;
+  }
+  const capsMode = inferReasoningModeFromCapabilities(reasoningCaps);
+  if (capsMode !== null) return capsMode;
+  return true;
 }
 
 function cloneObj(obj) {
@@ -1719,7 +1879,7 @@ function processQueue() {
     const item = requestQueue.shift();
     if (item.res.writableEnded) continue;
     activeRequests++;
-    proxyChatRequest(item.res, item.payload, item.model, item.writeError, item.writePassthroughError, item.skipLabel)
+    proxyChatRequest(item.res, item.payload, item.model, item.writeError, item.writePassthroughError, item.skipLabel, item.req)
       .finally(() => { activeRequests--; processQueue(); });
   }
 }
@@ -1736,16 +1896,20 @@ async function handleChatCompletions(req, res) {
 
   const limit = getEffectiveConcurrency().limit;
   if (limit !== null && activeRequests >= limit) {
-    requestQueue.push({ res, payload, model: requestedModel, writeError: writeOpenAIError, writePassthroughError, skipLabel });
+    requestQueue.push({ res, payload, model: requestedModel, writeError: writeOpenAIError, writePassthroughError, skipLabel, req });
     return;
   }
   activeRequests++;
-  proxyChatRequest(res, payload, requestedModel, writeOpenAIError, writePassthroughError, skipLabel)
+  proxyChatRequest(res, payload, requestedModel, writeOpenAIError, writePassthroughError, skipLabel, req)
     .finally(() => { activeRequests--; processQueue(); });
 }
 
-async function proxyChatRequest(res, payload, requestedModel, writeError, writeUpstreamError, skipLabel) {
+async function proxyChatRequest(res, payload, requestedModel, writeError, writeUpstreamError, skipLabel, req) {
   const reqStart = Date.now();
+  const requestMethod = req?.method;
+  const requestUrl = req ? `http://localhost${req.url}` : null;
+  const requestHeaders = req ? redactHeaders(req.headers) : null;
+  const requestBodyJson = payload ? redactBodyJson(JSON.stringify(payload)) : null;
 
   const fingerprint = fingerprintPayload(payload);
   let cachedSession = fingerprint != null ? touchConversation(fingerprint) : undefined;
@@ -1814,11 +1978,15 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
   })();
   payload.model = resolvedModel;
   if (payload.tools) {
-    const needNorm = payload.tools.some(t => t.function?.parameters?.$defs || t.function?.parameters?.definitions || t.function?.parameters?.$ref);
+    const needNorm = payload.tools.some(t => t.function?.parameters?.$defs || t.function?.parameters?.$definitions || t.function?.parameters?.$ref);
     if (needNorm) normalizeToolSchemas(payload.tools);
   }
 
-  payload.thinking = { type: 'enabled' };
+  const modelInfo = modelInfoMap[resolvedModel] || {};
+  const reasoningCaps = modelInfo.capabilities?.reasoning;
+  if (reasoningCaps?.supported === true && reasoningCaps.can_disable === false) {
+    payload.thinking = { type: 'enabled' };
+  }
 
   await enforceRateLimit(requestedModel);
 
@@ -1900,6 +2068,26 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
 
     if (resp.status === 500 || resp.status === 503) {
       keyPool.markUnhealthy(slot.index, resp.status);
+      logHttpError({
+        errorType: 'upstream_http_error',
+        stage: isLast ? 'final_attempt' : 'retryable_attempt',
+        attempt,
+        session: session ? { sessNum, slotName: slot.name } : null,
+        request: {
+          method: requestMethod,
+          url: requestUrl,
+          headers: requestHeaders,
+          body: requestBodyJson,
+        },
+        upstream: {
+          url: `${config.upstreamBaseURL}/chat/completions`,
+          method: 'POST',
+          headers: redactHeaders(resp.headers),
+          status: resp.status,
+          statusText: http.STATUS_CODES[resp.status] || '',
+          body: redactBodyJson(errorBodyStr),
+        },
+      }).catch(e => console.error('failed to write errors.log:', e.message));
       if (isLast) {
         console.error(`${reqStart} [Session#${sessNum}>${slot.name}]-[${requestedModel}]-error:${resp.status}-FINAL`);
         writeUpstreamError(res, resp.status, errorBodyStr);
@@ -2055,87 +2243,6 @@ async function handleRequest(req, res) {
 
   if (pathname === '/api/models' && req.method === 'GET') {
     writeJSON(res, 200, { models: config.enabledModels || [], model_display_names: modelDisplayNameMap });
-    return;
-  }
-
-  if (pathname === '/api/models/search' && req.method === 'GET') {
-    try {
-      const query = parsedUrl.searchParams.get('q') || '';
-      const filters = {};
-      if (parsedUrl.searchParams.get('family')) filters.family = parsedUrl.searchParams.get('family');
-      if (parsedUrl.searchParams.get('license')) filters.license = parsedUrl.searchParams.get('license');
-      if (parsedUrl.searchParams.get('modalities')) filters.modalities = parsedUrl.searchParams.get('modalities');
-      if (parsedUrl.searchParams.get('capabilities')) filters.capabilities = parsedUrl.searchParams.get('capabilities');
-      if (parsedUrl.searchParams.get('context_length_min')) filters.context_length_min = parsedUrl.searchParams.get('context_length_min');
-      if (parsedUrl.searchParams.get('context_length_max')) filters.context_length_max = parsedUrl.searchParams.get('context_length_max');
-      const data = await searchModels(query, filters);
-      const enabledSet = new Set(config.enabledModels || []);
-      if (data.data && Array.isArray(data.data)) {
-        for (const m of data.data) {
-          m.already_added = enabledSet.has(m.id);
-        }
-      }
-      writeJSON(res, 200, data);
-    } catch (e) {
-      writeJSON(res, 502, { error: { message: `UMANS API error: ${e.message}`, type: 'upstream_error' } });
-    }
-    return;
-  }
-
-  if (pathname === '/api/models/families' && req.method === 'GET') {
-    try {
-      const data = await searchModels('');
-      const families = new Set();
-      const known = ['llama', 'qwen', 'deepseek', 'mistral', 'gemma', 'phi', 'yi', 'minimax', 'gpt', 'grok', 'claude', 'gemini', 'umans', 'glm', 'kimi'];
-      for (const m of data.data || []) {
-        const id = (m.id || '').toLowerCase();
-        for (const name of known) {
-          if (id.startsWith(name) || id.includes('-' + name) || id.includes(name + '-')) {
-            families.add(name);
-          }
-        }
-      }
-      writeJSON(res, 200, { families: [...families].sort() });
-    } catch (e) {
-      writeJSON(res, 502, { error: { message: e.message } });
-    }
-    return;
-  }
-
-  if (pathname === '/api/models/add' && req.method === 'POST') {
-    try {
-      const body = await readBody(req);
-      const data = JSON.parse(body);
-      const modelIds = Array.isArray(data.models) ? data.models : (data.model ? [data.model] : []);
-      if (modelIds.length === 0) { writeJSON(res, 400, { error: 'No models specified' }); return; }
-      if (!config.enabledModels) config.enabledModels = [];
-      let added = 0;
-      for (const id of modelIds) {
-        if (typeof id === 'string' && id.trim() && !config.enabledModels.includes(id.trim())) {
-          config.enabledModels.push(id.trim());
-          added++;
-        }
-      }
-      debouncedSaveConfig(config);
-      debouncedSetupOpencodeConfig();
-      writeJSON(res, 200, { success: true, added, total: config.enabledModels.length });
-    } catch (e) { writeJSON(res, 400, { error: e.message }); }
-    return;
-  }
-
-  if (pathname === '/api/models/remove' && req.method === 'POST') {
-    try {
-      const body = await readBody(req);
-      const data = JSON.parse(body);
-      const modelIds = Array.isArray(data.models) ? data.models : (data.model ? [data.model] : []);
-      if (modelIds.length === 0) { writeJSON(res, 400, { error: 'No models specified' }); return; }
-      if (!config.enabledModels) config.enabledModels = [];
-      const idSet = new Set(modelIds.map(id => typeof id === 'string' ? id.trim() : ''));
-      config.enabledModels = config.enabledModels.filter(m => !idSet.has(m));
-      debouncedSaveConfig(config);
-      debouncedSetupOpencodeConfig();
-      writeJSON(res, 200, { success: true, removed: modelIds.length, total: config.enabledModels.length });
-    } catch (e) { writeJSON(res, 400, { error: e.message }); }
     return;
   }
 
@@ -2406,7 +2513,7 @@ async function handleRequest(req, res) {
 
   if (pathname === '/api/umans/logout' && req.method === 'POST') {
     config.appSession = '';
-    debouncedSaveConfig(config);
+    saveConfig(config);
     writeJSON(res, 200, { success: true });
     return;
   }
@@ -2437,11 +2544,11 @@ function discoverOpencodeConfigs() {
   ];
 
   const finalize = (paths, source) => {
-    const result = [...new Set(paths.filter(p => fs.existsSync(path.dirname(p))))];
+    const result = [...new Set(paths.filter(p => fs.existsSync(p)))];
     opencodeConfigPathsCache = result;
     opencodeConfigPathsCacheTime = now;
-    if (source === 'powershell' && result.length > 0) {
-      console.log(`[Opencode] PowerShell discovered ${result.length} config(s): ${result.join(', ')}`);
+    if (result.length > 0) {
+      console.log(`[Opencode] ${source === 'powershell' ? 'PowerShell discovered' : 'Discovered'} ${result.length} config(s): ${result.join(', ')}`);
     }
     return result;
   };
@@ -2511,8 +2618,12 @@ function setupOpencodeConfig() {
   const configPaths = discoverOpencodeConfigs();
   let firstRun = false;
 
-  const modelKeys = Object.keys(modelDisplayNameMap);
-  const fallbackModels = modelKeys.length > 0 ? modelKeys : (config.enabledModels || []);
+  const enabledModels = config.enabledModels || [];
+  const fallbackModels = enabledModels.length > 0
+    ? enabledModels
+    : (Object.keys(modelDisplayNameMap).length > 0 ? Object.keys(modelDisplayNameMap) : []);
+
+  const modelsDevCatalog = modelsDevCache || {};
 
   for (const configFile of configPaths) {
     try {
@@ -2522,22 +2633,30 @@ function setupOpencodeConfig() {
         const caps = info.capabilities || {};
         const displayName = displayNames[m] || modelDisplayNameMap[m] || (info.display_name ? info.display_name.replace(/^Umans\s+/i, '') : '') || m.replace(/^umans-/i, '');
 
+        const devEntry = findModelsDevEntry(modelsDevCatalog, m);
+        const reasoningMode = resolveReasoningMode(devEntry, caps.reasoning);
+
         const entry = {
           id: m,
           name: displayName,
-          reasoning: true,
+          reasoning: reasoningMode,
           interleaved: { field: 'reasoning_content' },
         };
 
         if (typeof caps.context_window === 'number' && caps.context_window > 0) {
+          let outputLimit = caps.context_window;
+          if (typeof caps.recommended_max_tokens === 'number' && caps.recommended_max_tokens > 0) {
+            outputLimit = caps.recommended_max_tokens;
+          } else if (typeof caps.max_completion_tokens === 'number' && caps.max_completion_tokens > 0) {
+            outputLimit = caps.max_completion_tokens;
+          }
           entry.limit = {
             context: caps.context_window,
-            output: (typeof caps.max_completion_tokens === 'number' && caps.max_completion_tokens > 0)
-              ? caps.max_completion_tokens
-              : caps.context_window,
+            output: outputLimit,
           };
         }
 
+        entry.temperature = true;
         if (typeof caps.supports_tools === 'boolean') entry.tool_call = caps.supports_tools;
         if (typeof caps.supports_vision === 'boolean') entry.attachment = caps.supports_vision;
 
@@ -2552,7 +2671,7 @@ function setupOpencodeConfig() {
       }
       const providerEntry = {
         npm: '@ai-sdk/openai-compatible',
-        name: 'UMANS AI',
+        name: 'Umans.AI-Proxy',
         options: { baseURL: `http://localhost:${port}/v1` },
         models,
       };
@@ -2639,6 +2758,12 @@ async function startServer(retryPort = null) {
   if (conc.concurrent !== null) {
     const eff = getEffectiveConcurrency();
     console.log(`[Concurrency] sessions: ${eff.concurrent}${eff.overridden ? ' (overridden)' : ''}${conc.limit !== null ? ', limit: ' + eff.limit : ''}`);
+  }
+
+  try {
+    await getModelsDevCatalog();
+  } catch (e) {
+    console.log(`[Models.dev] Could not preload reasoning catalog: ${e.message}`);
   }
 
   let retryCount = 0;
