@@ -1436,30 +1436,113 @@ function stripReasoningContent(payload) {
 }
 
 function limitImagesInMessages(payload, maxImages) {
+  console.log(`[image-limit] invoked maxImages=${maxImages}`);
   if (!maxImages || maxImages <= 0) return;
-  const msgs = payload?.messages;
-  if (!Array.isArray(msgs)) return;
 
-  // Trim image_url/image parts across the entire conversation history, keeping the newest ones.
   const imageParts = [];
-  for (let mi = 0; mi < msgs.length; mi++) {
-    const m = msgs[mi];
-    if (m.role === 'system' || typeof m.content !== 'object' || !Array.isArray(m.content)) continue;
-    for (let pi = 0; pi < m.content.length; pi++) {
-      const part = m.content[pi];
+  const diagnosticTypes = new Map();
+  let textDataImageCount = 0;
+
+  function countDataUriImages(str) {
+    if (typeof str !== 'string') return;
+    const matches = str.match(/data:image\/[a-zA-Z0-9.+]+;base64,/g);
+    if (matches) textDataImageCount += matches.length;
+  }
+
+  function walkContentArray(content, time) {
+    if (!Array.isArray(content)) return;
+    for (let pi = 0; pi < content.length; pi++) {
+      const part = content[pi];
+      const type = part?.type || (typeof part === 'object' ? 'object' : typeof part);
+      diagnosticTypes.set(type, (diagnosticTypes.get(type) || 0) + 1);
+
       if (part && (part.type === 'image_url' || part.type === 'image')) {
-        imageParts.push({ m, pi, time: mi });
+        imageParts.push({ content, pi, time });
+      }
+      // Recurse into nested content arrays, e.g. Anthropic tool_result blocks.
+      if (part && Array.isArray(part.content)) {
+        walkContentArray(part.content, time);
+      }
+      // Count base64 images embedded directly in text blocks.
+      if (part && typeof part.text === 'string') {
+        countDataUriImages(part.text);
       }
     }
   }
 
-  if (imageParts.length <= maxImages) return;
+  // Top-level system blocks (Anthropic format).
+  if (payload && Array.isArray(payload.system)) {
+    walkContentArray(payload.system, -1);
+  }
 
-  // Oldest messages have the smallest index; delete their image parts first.
+  const msgs = payload?.messages;
+  if (Array.isArray(msgs)) {
+    for (let mi = 0; mi < msgs.length; mi++) {
+      const m = msgs[mi];
+      if (!m) continue;
+      if (Array.isArray(m.content)) {
+        walkContentArray(m.content, mi);
+      } else {
+        countDataUriImages(m.content);
+      }
+    }
+  }
+
+  console.log(`[image-limit] content types: ${JSON.stringify(Object.fromEntries(diagnosticTypes))}`);
+  console.log(`[image-limit] content-block images=${imageParts.length}, data-uri images in text=${textDataImageCount}, max=${maxImages}`);
+
+  const totalImages = imageParts.length + textDataImageCount;
+  if (totalImages <= maxImages) return;
+
+  // If most images are embedded as data URIs inside text, we cannot safely
+  // trim individual images without corrupting message text. Drop whole text
+  // blocks containing data URIs, oldest first, until we're under the cap.
+  if (textDataImageCount >= imageParts.length) {
+    // Collect text blocks that contain data URIs.
+    const textImageHolders = [];
+    function collectTextImageHolders(content, time) {
+      if (!Array.isArray(content)) return;
+      for (let pi = 0; pi < content.length; pi++) {
+        const part = content[pi];
+        if (part && typeof part.text === 'string' && /data:image\/[a-zA-Z0-9.+]+;base64,/.test(part.text)) {
+          textImageHolders.push({ content, pi, time });
+        }
+        if (part && Array.isArray(part.content)) {
+          collectTextImageHolders(part.content, time);
+        }
+      }
+    }
+    if (payload && Array.isArray(payload.system)) collectTextImageHolders(payload.system, -1);
+    if (Array.isArray(msgs)) {
+      for (let mi = 0; mi < msgs.length; mi++) {
+        const m = msgs[mi];
+        if (m && Array.isArray(m.content)) collectTextImageHolders(m.content, mi);
+      }
+    }
+    textImageHolders.sort((a, b) => a.time - b.time);
+    const toRemove = totalImages - maxImages;
+    console.log(`[image-limit] dropping ${toRemove} text blocks with embedded data-uri images`);
+    const removedFromArray = new Map();
+    for (let i = 0; i < Math.min(toRemove, textImageHolders.length); i++) {
+      const { content, pi } = textImageHolders[i];
+      const offset = removedFromArray.get(content) || 0;
+      const adjustedIndex = pi - offset;
+      content.splice(adjustedIndex, 1);
+      removedFromArray.set(content, offset + 1);
+    }
+    return;
+  }
+
+  // Oldest content-block images have the smallest time/index; delete first.
   const toRemove = imageParts.length - maxImages;
+  console.log(`[image-limit] removing ${toRemove} oldest content-block images`);
+  const removedFromArray = new Map();
   for (let i = 0; i < toRemove; i++) {
-    const { m, pi } = imageParts[i];
-    m.content.splice(pi, 1);
+    const { content, pi } = imageParts[i];
+    const offset = removedFromArray.get(content) || 0;
+    const adjustedIndex = pi - offset;
+    content.splice(adjustedIndex, 1);
+    removedFromArray.set(content, offset + 1);
   }
 }
 
@@ -2209,6 +2292,10 @@ async function handleAnthropicMessages(req, res) {
   if (!requestedModel) { writeAnthropicError(res, 400, 'model is required', 'invalid_request_error'); return; }
   const skipLabel = req.headers['x-umans-proxy-skip-label'] === '1';
   const isStream = anthropicPayload.stream === true;
+
+  // Anthropic payloads are passed through mostly untouched, but apply the same
+  // image-count cap the OpenAI path uses so UMANS never sees > MAX_IMAGES images.
+  limitImagesInMessages(anthropicPayload, config.maxImages);
 
   const limit = getEffectiveConcurrency().limit;
   if (limit !== null && activeRequests >= limit) {
