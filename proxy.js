@@ -2153,7 +2153,7 @@ function buildReasoningVariants(reasoningCaps) {
     if (lvl === 'none') continue;
     const budget = REASONING_LEVEL_BUDGETS[lvl];
     if (!budget) continue;
-    variants[lvl] = { thinking: { type: 'adaptive', budgetTokens: budget } };
+    variants[lvl] = { thinking: { type: 'enabled', budgetTokens: budget } };
     added = true;
   }
   return added ? variants : null;
