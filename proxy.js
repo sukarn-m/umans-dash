@@ -1483,8 +1483,7 @@ function fingerprintPayload(payload) {
   const idx = msgs.findIndex(m => m.role === 'user');
   if (idx < 0) return null;
   const raw = text(msgs[idx]);
-  const stripped = raw.replace(/^\[[^\]]+\]\s*/, '');
-  return crypto.createHash('md5').update(stripped).digest('hex').slice(0, 12);
+  return crypto.createHash('md5').update(raw).digest('hex').slice(0, 12);
 }
 
 function stripReasoningContent(payload) {
@@ -1499,41 +1498,23 @@ function stripReasoningContent(payload) {
 }
 
 function limitImagesInMessages(payload, maxImages) {
-  console.log(`[image-limit] invoked maxImages=${maxImages}`);
   if (!maxImages || maxImages <= 0) return;
 
   const imageParts = [];
-  const diagnosticTypes = new Map();
-  let textDataImageCount = 0;
-
-  function countDataUriImages(str) {
-    if (typeof str !== 'string') return;
-    const matches = str.match(/data:image\/[a-zA-Z0-9.+]+;base64,/g);
-    if (matches) textDataImageCount += matches.length;
-  }
 
   function walkContentArray(content, time) {
     if (!Array.isArray(content)) return;
     for (let pi = 0; pi < content.length; pi++) {
       const part = content[pi];
-      const type = part?.type || (typeof part === 'object' ? 'object' : typeof part);
-      diagnosticTypes.set(type, (diagnosticTypes.get(type) || 0) + 1);
-
       if (part && (part.type === 'image_url' || part.type === 'image')) {
         imageParts.push({ content, pi, time });
       }
-      // Recurse into nested content arrays, e.g. Anthropic tool_result blocks.
       if (part && Array.isArray(part.content)) {
         walkContentArray(part.content, time);
-      }
-      // Count base64 images embedded directly in text blocks.
-      if (part && typeof part.text === 'string') {
-        countDataUriImages(part.text);
       }
     }
   }
 
-  // Top-level system blocks (Anthropic format).
   if (payload && Array.isArray(payload.system)) {
     walkContentArray(payload.system, -1);
   }
@@ -1545,67 +1526,17 @@ function limitImagesInMessages(payload, maxImages) {
       if (!m) continue;
       if (Array.isArray(m.content)) {
         walkContentArray(m.content, mi);
-      } else {
-        countDataUriImages(m.content);
       }
     }
   }
 
-  console.log(`[image-limit] content types: ${JSON.stringify(Object.fromEntries(diagnosticTypes))}`);
-  console.log(`[image-limit] content-block images=${imageParts.length}, data-uri images in text=${textDataImageCount}, max=${maxImages}`);
+  if (imageParts.length <= maxImages) return;
 
-  const totalImages = imageParts.length + textDataImageCount;
-  if (totalImages <= maxImages) return;
+  imageParts.sort((a, b) => a.time - b.time);
 
-  // If most images are embedded as data URIs inside text, we cannot safely
-  // trim individual images without corrupting message text. Drop whole text
-  // blocks containing data URIs, oldest first, until we're under the cap.
-  if (textDataImageCount >= imageParts.length) {
-    // Collect text blocks that contain data URIs.
-    const textImageHolders = [];
-    function collectTextImageHolders(content, time) {
-      if (!Array.isArray(content)) return;
-      for (let pi = 0; pi < content.length; pi++) {
-        const part = content[pi];
-        if (part && typeof part.text === 'string' && /data:image\/[a-zA-Z0-9.+]+;base64,/.test(part.text)) {
-          textImageHolders.push({ content, pi, time });
-        }
-        if (part && Array.isArray(part.content)) {
-          collectTextImageHolders(part.content, time);
-        }
-      }
-    }
-    if (payload && Array.isArray(payload.system)) collectTextImageHolders(payload.system, -1);
-    if (Array.isArray(msgs)) {
-      for (let mi = 0; mi < msgs.length; mi++) {
-        const m = msgs[mi];
-        if (m && Array.isArray(m.content)) collectTextImageHolders(m.content, mi);
-      }
-    }
-    textImageHolders.sort((a, b) => a.time - b.time);
-    const toRemove = totalImages - maxImages;
-    console.log(`[image-limit] dropping ${toRemove} text blocks with embedded data-uri images`);
-    const removedFromArray = new Map();
-    for (let i = 0; i < Math.min(toRemove, textImageHolders.length); i++) {
-      const { content, pi } = textImageHolders[i];
-      const offset = removedFromArray.get(content) || 0;
-      const adjustedIndex = pi - offset;
-      content.splice(adjustedIndex, 1);
-      removedFromArray.set(content, offset + 1);
-    }
-    return;
-  }
-
-  // Oldest content-block images have the smallest time/index; delete first.
-  const toRemove = imageParts.length - maxImages;
-  console.log(`[image-limit] removing ${toRemove} oldest content-block images`);
-  const removedFromArray = new Map();
-  for (let i = 0; i < toRemove; i++) {
+  for (let i = 0; i < imageParts.length - maxImages; i++) {
     const { content, pi } = imageParts[i];
-    const offset = removedFromArray.get(content) || 0;
-    const adjustedIndex = pi - offset;
-    content.splice(adjustedIndex, 1);
-    removedFromArray.set(content, offset + 1);
+    content[pi] = { type: 'text', text: '(Image previously shared)' };
   }
 }
 
@@ -1763,17 +1694,6 @@ async function performVisionHandoff(payload, resolvedModel, slot, sessNum, reqSt
   return imageParts.length;
 }
 
-function stampSessionLabel(payload, name, sessNum) {
-  const msgs = payload?.messages;
-  if (!Array.isArray(msgs)) return;
-  const idx = msgs.findIndex(m => m.role === 'user');
-  if (idx < 0) return;
-  const m = msgs[idx];
-  const label = `${name}|sess${sessNum}`;
-  const setter = (c) => { if (typeof c === 'string') return `[${label}] ${c}`; if (Array.isArray(c)) { const b = c.find(p => p?.type === 'text'); if (b) b.text = `[${label}] ${b.text}`; } return c; };
-  m.content = setter(m.content);
-}
-
 const UPSTREAM_AGENT = new https.Agent({ keepAlive: true, keepAliveMsecs: 60000, maxSockets: 128, timeout: 300000, maxFreeSockets: 64, scheduling: 'lifo' });
 
 // ── Sleev context-compression gateway manager ──────────────────────────────
@@ -1799,12 +1719,33 @@ function resolveSleevBinary() {
 }
 
 function isSleevLoggedIn(binPath) {
+  const useShell = binPath.endsWith('.cmd') || binPath.endsWith('.bat');
   try {
-    const out = execSync(`"${binPath}" auth status`, { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8', timeout: 8000 });
-    // `sleev auth status` outputs JSON: {"signedIn": true/false, ...}
+    const out = execSync(`"${binPath}" auth status`, { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8', timeout: 8000, shell: useShell });
     if (out.includes('"signedIn"')) return /"signedIn"\s*:\s*true/.test(out);
     return /logged in|authenticated|signed in/i.test(out);
   } catch {
+    return false;
+  }
+}
+
+function isSleevGatewayHealthy(binPath) {
+  const useShell = binPath.endsWith('.cmd') || binPath.endsWith('.bat');
+  try {
+    const out = execSync(`"${binPath}" gateway status`, { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8', timeout: 8000, shell: useShell });
+    return /"running"\s*:\s*true/.test(out) && /"healthy"\s*:\s*true/.test(out);
+  } catch {
+    return false;
+  }
+}
+
+function runSleevSetup(binPath) {
+  const useShell = binPath.endsWith('.cmd') || binPath.endsWith('.bat');
+  try {
+    execSync(`"${binPath}" setup`, { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', timeout: 15000, shell: useShell });
+    return true;
+  } catch (e) {
+    console.error(`[Sleev] setup failed: ${e.message}`);
     return false;
   }
 }
@@ -1814,7 +1755,8 @@ async function startSleevSignIn(binPath) {
   // callback completes. We spawn it and watch for completion.
   return new Promise((resolve) => {
     let stdout = '';
-    const child = spawn(binPath, ['auth', 'login'], { stdio: ['ignore', 'pipe', 'pipe'], shell: false });
+    const useShell = binPath.endsWith('.cmd') || binPath.endsWith('.bat');
+    const child = spawn(binPath, ['auth', 'login'], { stdio: ['ignore', 'pipe', 'pipe'], shell: useShell });
     sleevState.signInProcess = child;
     child.stdout.on('data', (d) => { stdout += d.toString(); });
     child.on('close', (code) => {
@@ -1841,19 +1783,25 @@ const sleevState = {
 
 function spawnSleevGateway(binPath) {
   if (sleevState.gatewayProcess) return true;
+  const useShell = binPath.endsWith('.cmd') || binPath.endsWith('.bat');
   try {
-    const child = spawn(binPath, ['gateway', 'start', '--host', SLEEV_GATEWAY_HOST, '--port', String(SLEEV_GATEWAY_PORT)], {
+    // `bind` sets host/port; `--restart` re-applies if already bound.
+    execSync(`"${binPath}" gateway bind --host ${SLEEV_GATEWAY_HOST} --port ${SLEEV_GATEWAY_PORT} --restart`, { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', timeout: 10000, shell: useShell });
+    // `start` launches the daemon process.
+    const child = spawn(binPath, ['gateway', 'start'], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      shell: false,
+      shell: useShell,
       windowsHide: true,
     });
     sleevState.gatewayProcess = child;
+    let stderrBuf = '';
     child.stdout.on('data', (d) => { const s = d.toString().trim(); if (s) console.log(`[Sleev] ${s}`); });
-    child.stderr.on('data', (d) => { const s = d.toString().trim(); if (s) console.error(`[Sleev] ${s}`); });
+    child.stderr.on('data', (d) => { const s = d.toString().trim(); if (s) { console.error(`[Sleev] ${s}`); stderrBuf += s + ' '; } });
     child.on('exit', (code, signal) => {
       console.log(`[Sleev] Gateway process exited (code=${code}, signal=${signal})`);
       sleevState.gatewayProcess = null;
       sleevState.ready = false;
+      if (code !== 0 && stderrBuf) sleevState.lastError = stderrBuf.trim();
     });
     child.on('error', (e) => {
       console.error(`[Sleev] Failed to spawn gateway: ${e.message}`);
@@ -1863,7 +1811,7 @@ function spawnSleevGateway(binPath) {
     return true;
   } catch (e) {
     sleevState.lastError = e.message;
-    console.error(`[Sleev] Spawn failed: ${e.message}`);
+    console.error(`[Sleev] Bind/spawn failed: ${e.message}`);
     return false;
   }
 }
@@ -1890,11 +1838,19 @@ async function startSleev() {
   if (!config.sleevEnabled) return false;
   const bin = resolveSleevBinary();
   if (!bin) {
-    sleevState.lastError = 'sleev binary not found. Run `npm install` in the proxy directory.';
+    sleevState.lastError = 'sleev binary not found — install with `npm install -g sleev`';
     console.error(`[Sleev] ${sleevState.lastError}`);
     return false;
   }
   sleevState.binary = bin;
+
+  // Fast path: gateway already running and healthy (e.g. started outside proxy)
+  if (isSleevGatewayHealthy(bin)) {
+    sleevState.ready = true;
+    sleevState.lastError = null;
+    console.log('[Sleev] Gateway already running and healthy.');
+    return true;
+  }
 
   if (!isSleevLoggedIn(bin)) {
     console.log('[Sleev] Not signed in. Attempting browser sign-in via `sleev auth login`...');
@@ -1906,6 +1862,13 @@ async function startSleev() {
       return false;
     }
     console.log('[Sleev] Sign-in successful.');
+  }
+
+  console.log('[Sleev] Running setup...');
+  if (!runSleevSetup(bin)) {
+    sleevState.lastError = 'sleev setup failed — run `npx sleev setup` manually, then restart';
+    console.error('[Sleev] Setup failed.');
+    return false;
   }
 
   console.log(`[Sleev] Starting gateway on ${SLEEV_GATEWAY_HOST}:${SLEEV_GATEWAY_PORT}...`);
@@ -2625,10 +2588,10 @@ function processQueue() {
     if (item.res.writableEnded) continue;
     activeRequests++;
     if (item.format === 'anthropic') {
-      proxyAnthropicRequest(item.res, item.payload, item.model, item.writeError, item.writePassthroughError, item.skipLabel, item.req)
+      proxyAnthropicRequest(item.res, item.payload, item.model, item.writeError, item.writePassthroughError, item.req)
         .finally(() => { activeRequests--; processQueue(); });
     } else {
-      proxyChatRequest(item.res, item.payload, item.model, item.writeError, item.writePassthroughError, item.skipLabel, item.req)
+      proxyChatRequest(item.res, item.payload, item.model, item.writeError, item.writePassthroughError, item.req)
         .finally(() => { activeRequests--; processQueue(); });
     }
   }
@@ -2642,19 +2605,18 @@ async function handleChatCompletions(req, res) {
   try { payload = JSON.parse(requestBody); } catch (e) { writeOpenAIError(res, 400, 'request body must be valid JSON', 'invalid_request_error', ''); return; }
   const requestedModel = (payload.model || '').trim();
   if (!requestedModel) { writeOpenAIError(res, 400, 'model is required', 'invalid_request_error', ''); return; }
-  const skipLabel = req.headers['x-umans-proxy-skip-label'] === '1';
 
   const limit = getEffectiveConcurrency().limit;
   if (limit !== null && activeRequests >= limit) {
-    requestQueue.push({ res, payload, model: requestedModel, writeError: writeOpenAIError, writePassthroughError, skipLabel, req });
+    requestQueue.push({ res, payload, model: requestedModel, writeError: writeOpenAIError, writePassthroughError, req });
     return;
   }
   activeRequests++;
-  proxyChatRequest(res, payload, requestedModel, writeOpenAIError, writePassthroughError, skipLabel, req)
+  proxyChatRequest(res, payload, requestedModel, writeOpenAIError, writePassthroughError, req)
     .finally(() => { activeRequests--; processQueue(); });
 }
 
-async function proxyAnthropicRequest(res, payload, requestedModel, writeError, writePassthroughError, skipLabel, req) {
+async function proxyAnthropicRequest(res, payload, requestedModel, writeError, writePassthroughError, req) {
   const reqStart = Date.now();
   const isStream = payload.stream === true;
 
@@ -2748,7 +2710,6 @@ async function handleAnthropicMessages(req, res) {
   try { anthropicPayload = JSON.parse(requestBody); } catch (e) { writeAnthropicError(res, 400, 'request body must be valid JSON', 'invalid_request_error'); return; }
   const requestedModel = (anthropicPayload.model || '').trim();
   if (!requestedModel) { writeAnthropicError(res, 400, 'model is required', 'invalid_request_error'); return; }
-  const skipLabel = req.headers['x-umans-proxy-skip-label'] === '1';
   const isStream = anthropicPayload.stream === true;
 
   // Anthropic payloads are passed through mostly untouched, but apply the same
@@ -2757,15 +2718,15 @@ async function handleAnthropicMessages(req, res) {
 
   const limit = getEffectiveConcurrency().limit;
   if (limit !== null && activeRequests >= limit) {
-    requestQueue.push({ res, payload: anthropicPayload, model: requestedModel, writeError: writeAnthropicError, writePassthroughError: writeAnthropicPassthroughError, skipLabel, req, format: 'anthropic' });
+    requestQueue.push({ res, payload: anthropicPayload, model: requestedModel, writeError: writeAnthropicError, writePassthroughError: writeAnthropicPassthroughError, req, format: 'anthropic' });
     return;
   }
   activeRequests++;
-  proxyAnthropicRequest(res, anthropicPayload, requestedModel, writeAnthropicError, writeAnthropicPassthroughError, skipLabel, req)
+  proxyAnthropicRequest(res, anthropicPayload, requestedModel, writeAnthropicError, writeAnthropicPassthroughError, req)
     .finally(() => { activeRequests--; processQueue(); });
 }
 
-async function proxyChatRequest(res, payload, requestedModel, writeError, writeUpstreamError, skipLabel, req) {
+async function proxyChatRequest(res, payload, requestedModel, writeError, writeUpstreamError, req) {
   const reqStart = Date.now();
   const requestMethod = req?.method;
   const requestUrl = req ? `http://localhost${req.url}` : null;
@@ -2806,9 +2767,7 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
     console.log(`${reqStart} [Session#${sessNum}>${slot.name}]-[${requestedModel}]-first-prompt: ${firstPrompt}`);
   }
 
-  if (!skipLabel) stampSessionLabel(payload, slot.name, sessNum);
   stripReasoningContent(payload);
-  limitImagesInMessages(payload, config.maxImages);
 
   const cacheEnabled = config.cacheEnabled && !payload.stream;
   let ck;
@@ -2841,6 +2800,9 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
   }
 
   const modelInfo = modelInfoMap[resolvedModel] || {};
+  const isHandoffModel = needsVisionHandoff(resolvedModel);
+  limitImagesInMessages(payload, 1);
+
   const reasoningCaps = modelInfo.capabilities?.reasoning;
   if (reasoningCaps?.supported === true && reasoningCaps.can_disable === false) {
     payload.thinking = { type: 'adaptive' };
@@ -2866,7 +2828,6 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
     }
 
     const contentType = resp.headers['content-type'] || '';
-    console.log(`${reqStart} [Session#${sessNum}>${slot.name}]-[${requestedModel}]-upstream:${resp.status} ct:${contentType}`);
 
     if (resp.status >= 200 && resp.status < 300) {
       try {
@@ -2920,7 +2881,7 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
           console.log(`${reqStart} [Session#${sessNum}>${slot.name}]-[${requestedModel}]-body:${cacheBody.substring(0, 800)}`);
         }
       } catch (e) { console.error(`proxy response copy failed: ${e.message}`); }
-      console.log(`${reqStart} [Session#${sessNum}>${slot.name}]-[${requestedModel}]-done:${Date.now() - reqStart}ms`);
+
       return { retry: false };
     }
 

@@ -662,7 +662,6 @@
         const d = await r.json();
         if (!d.success) throw new Error(d.error || 'failed');
         if (enabled) {
-          status.textContent = 'Waiting for gateway (may prompt browser sign-in on first run)...';
           pollSleevStatus();
         } else {
           status.textContent = 'Stopped.';
@@ -672,6 +671,13 @@
         document.getElementById('sleevToggle').checked = !enabled;
         label.textContent = !enabled ? 'On' : 'Off';
       }
+    }
+
+    function sleevCopyCmd() {
+      navigator.clipboard.writeText('npx sleev auth login').then(() => {
+        const btn = document.getElementById('sleevCopyBtn');
+        if (btn) { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = 'Copy'; }, 1500); }
+      });
     }
 
     let sleevPollTimer = null;
@@ -686,12 +692,17 @@
         toggle.checked = !!d.enabled;
         label.textContent = d.enabled ? 'On' : 'Off';
         if (d.ready) {
-          status.textContent = 'Active (compressing context)';
+          status.innerHTML = '<span style="color:#4ade80">Active</span> (compressing context)';
           sleevPollTimer = null;
           return;
         }
         if (d.enabled) {
-          status.textContent = d.lastError || 'Starting gateway...';
+          const err = d.lastError || '';
+          if (/sign-in|signed in|auth/i.test(err)) {
+            status.innerHTML = '<span style="color:#fbbf24">Sign-in required</span><div style="margin-top:4px;display:flex;align-items:center;gap:4px"><code style="background:rgba(255,255,255,0.1);padding:2px 6px;border-radius:3px;font-size:0.6rem;user-select:all">npx sleev auth login</code><button id="sleevCopyBtn" class="btn btn-outline-action" style="font-size:0.55rem;padding:1px 6px;white-space:nowrap" onclick="sleevCopyCmd()">Copy</button></div>';
+          } else {
+            status.textContent = err || 'Starting gateway...';
+          }
           sleevPollTimer = setTimeout(pollSleevStatus, 3000);
         } else {
           status.textContent = '';
@@ -1158,7 +1169,7 @@ container.innerHTML = `<div style="width:100%;font-size:11px;white-space:nowrap"
       try {
         const resp = await fetch('/v1/messages', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-api-key': 'dashboard', 'anthropic-version': '2023-06-01', 'x-umans-proxy-skip-label': '1' },
+          headers: { 'Content-Type': 'application/json', 'x-api-key': 'dashboard', 'anthropic-version': '2023-06-01' },
           body: JSON.stringify(body),
           signal: testChatAbort.signal,
         });
