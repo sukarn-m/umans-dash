@@ -2240,10 +2240,7 @@ async function handleModels(req, res) {
           outputLimit = caps.max_completion_tokens;
         }
         entry.context_length = caps.context_window;
-        entry.limit = {
-          context: caps.context_window,
-          output: outputLimit,
-        };
+        entry.max_output_tokens = outputLimit;
       }
       if (upstreamPricing[m]) {
         const p = upstreamPricing[m];

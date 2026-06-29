@@ -178,7 +178,7 @@ Normalizes JSON Schema in tools to handle `$ref`, `$defs`, `definitions`, nullab
 ### 11. Core HTTP Handlers (proxy.js:2160-2629)
 
 - `handleHealthz` (line 2160) — Returns uptime, token_state, models_count, runtime, cache stats, sleev status
-- `handleModels` (line 2209) — OpenAI-format model list from catalog. **Pricing format**: upstream per-million prices are converted to per-token (divided by 1,000,000) for Hermes/opencode compatibility. Each model entry includes `context_length`, `limit`, `display_name`, and `pricing` fields when available.
+- `handleModels` (line 2209) — OpenAI-format model list from catalog. **Pricing format**: upstream per-million prices are converted to per-token (divided by 1,000,000) for Hermes/opencode compatibility. Each model entry includes `context_length`, `max_output_tokens`, `display_name`, and `pricing` fields when available. The output token limit is exposed as a top-level `max_output_tokens` field (not nested inside a `limit` object) to avoid key collisions with Hermes' pricing alias extractor, which walks all nested dicts and would otherwise match `limit.output` as a pricing value.
 - `processQueue()` (line 2263) — Dequeues from `requestQueue` while `activeRequests < limit`. Dispatches to `proxyAnthropicRequest` or `proxyChatRequest` based on `format`.
 - `handleChatCompletions` (line 2281) — Parses body, checks queue overflow (`MAX_QUEUE_SIZE`), queues or executes via `proxyChatRequest`
 - `handleAnthropicMessages` (line 2390) — Entry point for `/v1/messages`; applies image cap, queues or executes via `proxyAnthropicRequest`
