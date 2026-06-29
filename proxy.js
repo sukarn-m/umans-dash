@@ -45,8 +45,9 @@ function redactHeaders(headers) {
 
 function redactBodyJson(body) {
   try {
-    if (!body || typeof body !== 'string') return body;
-    const parsed = JSON.parse(body);
+    const isStr = typeof body === 'string';
+    const parsed = isStr ? JSON.parse(body) : body;
+    if (!parsed || typeof parsed !== 'object') return isStr ? body : (() => { try { return JSON.stringify(body); } catch { return '[unserializable]'; } })();
     function walk(o) {
       if (!o || typeof o !== 'object') return o;
       if (Array.isArray(o)) return o.map(walk);
@@ -69,7 +70,8 @@ function redactBodyJson(body) {
     }
     return JSON.stringify(walk(parsed), null, 2);
   } catch (e) {
-    return body;
+    if (typeof body === 'string') return body;
+    try { return JSON.stringify(body); } catch { return '[unserializable]'; }
   }
 }
 
@@ -86,7 +88,7 @@ const IS_BUN = typeof Bun !== 'undefined';
 const RUNTIME_VERSION = IS_BUN ? Bun.version : process.version.replace('v', '');
 
 let config = null;
-let userInfoCache = { data: null, time: 0, ttl: 60000 };
+let userInfoCache = { data: null, time: 0, ttl: 5 * 60 * 1000 };
 let startTime = new Date();
 let keyPool = null;
 let globalSessionCounter = 0;
@@ -102,9 +104,9 @@ function touchConversation(fingerprint) {
   return session;
 }
 
-function trackConversationSession(fingerprint, session) {
+function trackConversationSession(fingerprint, session, alreadyTouched) {
   if (!fingerprint) return;
-  if (conversationMap.size >= CONVERSATION_MAP_MAX) {
+  if (conversationMap.size >= CONVERSATION_MAP_MAX && !conversationMap.has(fingerprint)) {
     const target = Math.floor(CONVERSATION_MAP_MAX * 0.8);
     const iter = conversationMap.keys();
     while (conversationMap.size > target) {
@@ -113,8 +115,12 @@ function trackConversationSession(fingerprint, session) {
       conversationMap.delete(key);
     }
   }
-  conversationMap.delete(fingerprint);
-  conversationMap.set(fingerprint, session);
+  if (alreadyTouched) {
+    conversationMap.set(fingerprint, session);
+  } else {
+    conversationMap.delete(fingerprint);
+    conversationMap.set(fingerprint, session);
+  }
 }
 
 // ── Shell-command guard ─────────────────────────────────────────────────────
@@ -314,6 +320,8 @@ let modelInfoMap = {};
 const MODEL_CATALOG_CACHE_TTL = 5 * 60 * 1000;
 let modelCatalogFetchPromise = null;
 
+let _orderedModelIdsCache = null;
+
 function applyCatalogData(data) {
   if (data && typeof data === 'object' && !Array.isArray(data.data)) {
     modelDisplayNameMap = {};
@@ -323,10 +331,12 @@ function applyCatalogData(data) {
       modelInfoMap[id] = info;
       if (info.display_name) modelDisplayNameMap[id] = info.display_name.replace(/^Umans\s+/i, '');
     }
+    _orderedModelIdsCache = null;
   }
 }
 
 function getOrderedModelIds() {
+  if (_orderedModelIdsCache) return _orderedModelIdsCache;
   const ids = Object.keys(modelInfoMap);
   // Keep a stable, deterministic order: display_name then id
   ids.sort((a, b) => {
@@ -336,6 +346,7 @@ function getOrderedModelIds() {
     if (da > db) return 1;
     return a.localeCompare(b);
   });
+  _orderedModelIdsCache = ids;
   return ids;
 }
 
@@ -367,9 +378,6 @@ let opencodeSetupPending = false;
 
 // --- FreeGen background wallpaper state ---
 
-const RATE_LIMIT_MAP = {};
-const rateLimitTimestamps = new Map();
-
 const MAX_RETRIES = 10;
 const RETRY_DELAY_MS = 3000;
 
@@ -382,15 +390,6 @@ async function retryLoop(fn) {
       await new Promise(r => setTimeout(r, delay));
     }
   }
-}
-
-async function enforceRateLimit(model) {
-  const delay = RATE_LIMIT_MAP[model];
-  if (!delay) return;
-  const last = rateLimitTimestamps.get(model) || 0;
-  const wait = delay - (Date.now() - last);
-  if (wait > 0) await new Promise(r => setTimeout(r, wait));
-  rateLimitTimestamps.set(model, Date.now());
 }
 
 function extractUserPrompt(payload) {
@@ -462,10 +461,10 @@ function loadConfig() {
     MAX_IMAGES: 9,
     SHELL_TOOL_GUARD: false,
   };
-  if (fs.existsSync(configPath)) {
-    try {
-      rawConfig = { ...rawConfig, ...JSON.parse(fs.readFileSync(configPath, 'utf8')) };
-    } catch (e) { console.error('Failed to parse config.json:', e.message); }
+  try {
+    rawConfig = { ...rawConfig, ...JSON.parse(fs.readFileSync(configPath, 'utf8')) };
+  } catch (e) {
+    if (e.code !== 'ENOENT') console.error('Failed to parse config.json:', e.message);
   }
   if (process.env.LISTEN_ADDR) rawConfig.LISTEN_ADDR = process.env.LISTEN_ADDR;
   if (process.env.UPSTREAM_BASE_URL) rawConfig.UPSTREAM_BASE_URL = process.env.UPSTREAM_BASE_URL;
@@ -984,10 +983,14 @@ async function fetchConcurrency(fresh = false) {
   const hard_cap = data?.limits?.concurrency?.hard_cap ?? null;
   const user_id = data?.user_id ?? null;
   lastConcurrency = { concurrent, limit, hard_cap, user_id };
+  _effectiveConcurrencyCache = null;
   return { concurrent, limit, hard_cap, user_id };
 }
 
+let _effectiveConcurrencyCache = null;
+
 function getEffectiveConcurrency() {
+  if (_effectiveConcurrencyCache) return _effectiveConcurrencyCache;
   const apiLimit = lastConcurrency.limit;
   const apiHardCap = lastConcurrency.hard_cap;
   const apiConcurrent = lastConcurrency.concurrent || 0;
@@ -995,9 +998,11 @@ function getEffectiveConcurrency() {
   const override = config?.overrideConcurrency || 0;
   if (override > 0) {
     const cap = apiHardCap !== null ? Math.min(override, apiHardCap) : override;
-    return { concurrent: apiConcurrent, limit: apiLimit, hard_cap: cap, overridden: true, user_id: apiUserId };
+    _effectiveConcurrencyCache = { concurrent: apiConcurrent, limit: apiLimit, hard_cap: cap, overridden: true, user_id: apiUserId };
+  } else {
+    _effectiveConcurrencyCache = { concurrent: apiConcurrent, limit: apiLimit, hard_cap: apiHardCap, overridden: false, user_id: apiUserId };
   }
-  return { concurrent: apiConcurrent, limit: apiLimit, hard_cap: apiHardCap, overridden: false, user_id: apiUserId };
+  return _effectiveConcurrencyCache;
 }
 
 const msgText = (m) => typeof m.content === 'string' ? m.content : (Array.isArray(m.content) ? m.content.find(p => p?.type === 'text')?.text || '' : '');
@@ -1301,10 +1306,10 @@ async function analyzeImageViaHandoff(dataUri, slot, reqStart, sessNum, imageInd
 
 // Replace all image parts in the payload with text descriptions from the
 // handoff model. Returns the number of images that were handed off.
-async function performVisionHandoff(payload, resolvedModel, slot, sessNum, reqStart) {
+async function performVisionHandoff(payload, resolvedModel, slot, sessNum, reqStart, preCollectedParts) {
   if (!needsVisionHandoff(resolvedModel)) return 0;
 
-  const imageParts = collectImageParts(payload);
+  const imageParts = preCollectedParts || collectImageParts(payload);
   if (imageParts.length === 0) return 0;
 
   const handoffModel = config.visionHandoffModel || 'umans-coder';
@@ -1802,7 +1807,7 @@ function buildReasoningVariants(reasoningCaps) {
 }
 
 function cloneObj(obj) {
-  return JSON.parse(JSON.stringify(obj));
+  return structuredClone(obj);
 }
 
 function normalizeToolSchemas(tools) {
@@ -2208,7 +2213,7 @@ async function handleHealthz(req, res) {
   if (req.method !== 'GET') { writeOpenAIError(res, 405, 'method not allowed', 'invalid_request_error', ''); return; }
   let modelsData = userInfoCache.data;
   if (!modelsData || Date.now() - userInfoCache.time > userInfoCache.ttl) {
-    try { modelsData = await upstream.getUserInfo(); userInfoCache = { data: modelsData, time: Date.now(), ttl: 60000 }; }
+    try { modelsData = await upstream.getUserInfo(); userInfoCache = { data: modelsData, time: Date.now(), ttl: 5 * 60 * 1000 }; }
     catch (e) { modelsData = userInfoCache.data; }
   }
   const poolState = keyPool?.state || [];
@@ -2364,12 +2369,12 @@ async function proxyAnthropicRequest(res, payload, requestedModel, writeError, w
   if (fingerprint != null) {
     if (!cachedSession) {
       session = { tokenIndex: slot.index, requestCount: 1, sessNum: ++globalSessionCounter };
-      trackConversationSession(fingerprint, session);
+      trackConversationSession(fingerprint, session, false);
     } else {
       session = cachedSession;
       session.requestCount++;
       session.tokenIndex = slot.index;
-      trackConversationSession(fingerprint, session);
+      trackConversationSession(fingerprint, session, true);
     }
   } else {
     session = { tokenIndex: slot.index, requestCount: 1, sessNum: ++globalSessionCounter };
@@ -2464,7 +2469,11 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
   const requestMethod = req?.method;
   const requestUrl = req ? `http://localhost${req.url}` : null;
   const requestHeaders = req ? redactHeaders(req.headers) : null;
-  const requestBodyJson = payload ? redactBodyJson(JSON.stringify(payload)) : null;
+  let _requestBodyJson = null;
+  const getRequestBodyJson = () => {
+    if (_requestBodyJson === null && payload) _requestBodyJson = redactBodyJson(payload);
+    return _requestBodyJson;
+  };
 
   const fingerprint = fingerprintPayload(payload);
   let cachedSession = fingerprint != null ? touchConversation(fingerprint) : undefined;
@@ -2482,22 +2491,23 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
   if (fingerprint != null) {
     if (!cachedSession) {
       session = { tokenIndex: slot.index, requestCount: 1, sessNum: ++globalSessionCounter };
-      trackConversationSession(fingerprint, session);
+      trackConversationSession(fingerprint, session, false);
     } else {
       session = cachedSession;
       session.requestCount++;
       session.tokenIndex = slot.index;
-      trackConversationSession(fingerprint, session);
+      trackConversationSession(fingerprint, session, true);
     }
   } else {
     session = { tokenIndex: slot.index, requestCount: 1, sessNum: ++globalSessionCounter };
   }
   const sessNum = session.sessNum;
   const requestedStream = payload.stream === true;
+  const userPrompt = extractUserPrompt(payload);
+  const promptPreview = userPrompt.substring(0, 80);
 
   if (session.requestCount === 1) {
-    const firstPrompt = extractUserPrompt(payload);
-    console.log(`${reqStart} [Session#${sessNum}>${slot.name}]-[${requestedModel}]-first-prompt: ${firstPrompt}`);
+    console.log(`${reqStart} [Session#${sessNum}>${slot.name}]-[${requestedModel}]-first-prompt: ${userPrompt}`);
   }
 
   stripReasoningContent(payload);
@@ -2508,7 +2518,6 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
     ck = cacheKey(payload, requestedModel);
     const cached = responseCache.get(ck);
     if (cached) {
-      const promptPreview = extractUserPrompt(payload).substring(0, 80);
       console.log(`${reqStart} [${slot.name}]-[${requestedModel}]-cache:HIT ${promptPreview}`);
       try {
         let parsed = null;
@@ -2522,7 +2531,6 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
     }
   }
 
-  const promptPreview = extractUserPrompt(payload).substring(0, 80);
   console.log(`${reqStart} [Session#${sessNum}>${slot.name}]-[${requestedModel}]-${promptPreview}`);
 
   const resolvedModel = resolveModelId(requestedModel);
@@ -2548,7 +2556,8 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
   // comment before the handoff so the client (or the Sleev gateway in front
   // of us) doesn't time out waiting for the first byte and retry the
   // request — which would produce duplicate sessions.
-  const willHandoff = needsVisionHandoff(resolvedModel) && collectImageParts(payload).length > 0;
+  const handoffImageParts = needsVisionHandoff(resolvedModel) ? collectImageParts(payload) : null;
+  const willHandoff = handoffImageParts && handoffImageParts.length > 0;
   let headersFlushed = false;
   if (willHandoff && requestedStream && !res.headersSent) {
     try {
@@ -2562,9 +2571,7 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
     } catch { /* client may have disconnected */ }
   }
 
-  await performVisionHandoff(payload, resolvedModel, slot, sessNum, reqStart);
-
-  await enforceRateLimit(requestedModel);
+  await performVisionHandoff(payload, resolvedModel, slot, sessNum, reqStart, handoffImageParts);
 
   await retryLoop(async ({ attempt, isLast }) => {
     // On retry after a key was marked unhealthy, try to rotate to a fresh key.
@@ -2681,7 +2688,7 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
           method: requestMethod,
           url: requestUrl,
           headers: requestHeaders,
-          body: requestBodyJson,
+          body: getRequestBodyJson(),
         },
         upstream: {
           url: `${config.upstreamBaseURL}/chat/completions`,
@@ -2718,13 +2725,30 @@ async function validateApiKey() {
   if (!config.apiKey) { console.log('No API key configured'); return false; }
   try {
     const data = await upstream.getUserInfo();
-    userInfoCache = { data, time: Date.now(), ttl: 60000 };
+    userInfoCache = { data, time: Date.now(), ttl: 5 * 60 * 1000 };
     applyCatalogData(data);
     console.log(`API key valid, ${Object.keys(modelDisplayNameMap).length} models loaded`);
     return true;
   } catch (e) {
     console.error(`API key validation failed: ${e.message}`);
     return false;
+  }
+}
+
+let _dashboardHtmlCache = null;
+let _dashboardHtmlMtime = 0;
+
+function getDashboardHtml(dashboardPath) {
+  try {
+    const stat = fs.statSync(dashboardPath);
+    if (_dashboardHtmlCache && stat.mtimeMs === _dashboardHtmlMtime) {
+      return _dashboardHtmlCache;
+    }
+    _dashboardHtmlCache = fs.readFileSync(dashboardPath, 'utf8');
+    _dashboardHtmlMtime = stat.mtimeMs;
+    return _dashboardHtmlCache;
+  } catch {
+    return null;
   }
 }
 
@@ -2739,8 +2763,8 @@ async function handleRequest(req, res) {
 
   if (pathname === '/dashboard' || pathname === '/') {
     const dashboardPath = path.join(__dirname, 'dashboard.html');
-    if (!fs.existsSync(dashboardPath)) { res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('Dashboard not found'); return; }
-    let dashboardHtml = fs.readFileSync(dashboardPath, 'utf8');
+    let dashboardHtml = getDashboardHtml(dashboardPath);
+    if (dashboardHtml === null) { res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('Dashboard not found'); return; }
 
     // Embed current wallpaper to prevent white flash while dashboard loads
     let bgStyle = '<style>body{background:#0d1117}</style>';
@@ -2808,7 +2832,7 @@ async function handleRequest(req, res) {
   if (newConfig.modelDisplayNames && typeof newConfig.modelDisplayNames === 'object') config.modelDisplayNames = newConfig.modelDisplayNames;
         if (newConfig.wallpaperSource !== undefined) config.wallpaperSource = newConfig.wallpaperSource;
         if (typeof newConfig.freegenPrompt === 'string') config.freegenPrompt = newConfig.freegenPrompt;
-        if (newConfig.overrideConcurrency !== undefined) config.overrideConcurrency = Math.max(0, newConfig.overrideConcurrency);
+        if (newConfig.overrideConcurrency !== undefined) { config.overrideConcurrency = Math.max(0, newConfig.overrideConcurrency); _effectiveConcurrencyCache = null; }
         if (typeof newConfig.maxImages !== 'undefined') config.maxImages = Math.max(1, newConfig.maxImages);
         if (Array.isArray(newConfig.disabledModels)) config.disabledModels = newConfig.disabledModels;
         if (typeof newConfig.visionHandoffEnabled === 'boolean') config.visionHandoffEnabled = newConfig.visionHandoffEnabled;
@@ -2864,19 +2888,12 @@ async function handleRequest(req, res) {
       const item = Array.isArray(data) ? data[0] : data;
       const imgUrl = item.fullUrl || item.imageUrl || item.url || '';
       if (!imgUrl) { writeJSON(res, 404, { error: 'not found' }); return; }
-      const imgResp = await new Promise((resolve, reject) => {
-        const u = new URL(imgUrl);
-        const mod = u.protocol === 'https:' ? require('https') : require('http');
-        const req = mod.get(imgUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' } }, resolve);
-        req.on('error', reject);
-        req.setTimeout(30000, () => { req.destroy(new Error('image download timeout')); });
+      const imgResp = await fetch(imgUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
+        signal: AbortSignal.timeout(30000),
       });
-      const buf = await new Promise((resolve, reject) => {
-        const chunks = [];
-        imgResp.on('data', c => chunks.push(c));
-        imgResp.on('end', () => resolve(Buffer.concat(chunks)));
-        imgResp.on('error', reject);
-      });
+      if (!imgResp.ok) throw new Error(`image download ${imgResp.status}`);
+      const buf = Buffer.from(await imgResp.arrayBuffer());
       fs.writeFileSync(imgCacheFile, buf);
       res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': buf.length, ...expireHeader });
       res.end(buf);
@@ -2913,19 +2930,12 @@ async function handleRequest(req, res) {
       const pick = data[Math.floor(Math.random() * data.length)];
       const imgUrl = pick?.path;
       if (!imgUrl) throw new Error('No image URL');
-      const imgResp = await new Promise((resolve, reject) => {
-        const u = new URL(imgUrl);
-        const mod = u.protocol === 'https:' ? require('https') : require('http');
-        const req = mod.get(imgUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' } }, resolve);
-        req.on('error', reject);
-        req.setTimeout(30000, () => { req.destroy(new Error('image download timeout')); });
+      const imgResp = await fetch(imgUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
+        signal: AbortSignal.timeout(30000),
       });
-      const buf = await new Promise((resolve, reject) => {
-        const chunks = [];
-        imgResp.on('data', c => chunks.push(c));
-        imgResp.on('end', () => resolve(Buffer.concat(chunks)));
-        imgResp.on('error', reject);
-      });
+      if (!imgResp.ok) throw new Error(`image download ${imgResp.status}`);
+      const buf = Buffer.from(await imgResp.arrayBuffer());
       fs.writeFileSync(imgCacheFile, buf);
       res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': buf.length });
       res.end(buf);
@@ -3209,17 +3219,32 @@ function debouncedSetupOpencodeConfig() {
   if (opencodeSetupTimeout) clearTimeout(opencodeSetupTimeout);
   opencodeSetupTimeout = setTimeout(() => {
     opencodeSetupTimeout = null;
-    try {
-      setupOpencodeConfig();
-    } catch (e) {
-      console.error(`[Opencode] Setup error: ${e.message}`);
-    } finally {
+    setupOpencodeConfig().then(() => {
       opencodeSetupPending = false;
-    }
+    }).catch(e => {
+      console.error(`[Opencode] Setup error: ${e.message}`);
+      opencodeSetupPending = false;
+    });
   }, 500);
 }
 
-function setupOpencodeConfig() {
+function buildModelsDevIndex(catalog) {
+  const index = {};
+  if (!catalog || typeof catalog !== 'object') return index;
+  const priorityOrder = ['umans-ai', 'openai', 'anthropic', 'google', 'mistral', 'meta', 'xai', 'deepseek', 'moonshotai', 'zhipuai', 'alibaba', 'nvidia', 'cohere', 'minimax', 'stepfun', 'xiaomi'];
+  const seen = new Set(priorityOrder);
+  const allProviders = Object.keys(catalog).filter(p => !seen.has(p));
+  for (const providerId of [...priorityOrder, ...allProviders]) {
+    const provider = catalog[providerId];
+    if (!provider || typeof provider !== 'object' || !provider.models) continue;
+    for (const [modelId, model] of Object.entries(provider.models)) {
+      if (!index[modelId]) index[modelId] = { providerId, modelId, model };
+    }
+  }
+  return index;
+}
+
+async function setupOpencodeConfig() {
   const displayNames = config.modelDisplayNames || {};
   const port = parseListenPort(config.listenAddr);
 
@@ -3228,7 +3253,8 @@ function setupOpencodeConfig() {
 
   const fallbackModels = getEffectiveModels();
 
-  const modelsDevCatalog = modelsDevCache || {};
+  const modelsDevCatalog = await getModelsDevCatalog() || {};
+  const modelsDevIndex = buildModelsDevIndex(modelsDevCatalog);
 
   for (const configFile of configPaths) {
     try {
@@ -3238,7 +3264,11 @@ function setupOpencodeConfig() {
         const caps = info.capabilities || {};
         const displayName = displayNames[m] || modelDisplayNameMap[m] || (info.display_name ? info.display_name.replace(/^Umans\s+/i, '') : '') || m.replace(/^umans-/i, '');
 
-        const devEntry = findModelsDevEntry(modelsDevCatalog, m);
+        const candidates = umansIdCandidates(m);
+        let devEntry = null;
+        for (const c of candidates) {
+          if (modelsDevIndex[c]) { devEntry = modelsDevIndex[c]; break; }
+        }
         const reasoningMode = resolveReasoningMode(devEntry, caps.reasoning);
 
         const entry = {
@@ -3309,8 +3339,14 @@ function setupOpencodeConfig() {
       const dir = path.dirname(configFile);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       let existing = { $schema: 'https://opencode.ai/config.json' };
-      if (fs.existsSync(configFile)) {
+      let fileExisted = false;
+      try {
         existing = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+        fileExisted = true;
+      } catch (e) {
+        if (e.code !== 'ENOENT') throw e;
+      }
+      if (fileExisted) {
         const backupFile = path.join(dir, 'openconfig.b4umans.json');
         if (!fs.existsSync(backupFile)) {
           fs.copyFileSync(configFile, backupFile);
@@ -3419,7 +3455,7 @@ async function startServer(retryPort = null) {
   }
 
   let retryCount = 0;
-  const MAX_RETRIES = 3;
+  const MAX_PORT_RETRIES = 3;
   const basePort = parseListenPort(config.listenAddr);
   let port = retryPort || basePort;
   server = http.createServer(handleRequest);
@@ -3427,15 +3463,15 @@ async function startServer(retryPort = null) {
   server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
       retryCount++;
-      if (retryCount > MAX_RETRIES) {
+      if (retryCount > MAX_PORT_RETRIES) {
         port = basePort + 1;
-        console.log(`[Warning] Port ${basePort} busy after ${MAX_RETRIES} retries, trying port ${port}`);
+        console.log(`[Warning] Port ${basePort} busy after ${MAX_PORT_RETRIES} retries, trying port ${port}`);
         retryCount = 0;
         server.close();
         server.listen(port, '127.0.0.1');
         return;
       }
-      console.log(`[Warning] Port ${port} in use (attempt ${retryCount}/${MAX_RETRIES}), retrying in 2s...`);
+      console.log(`[Warning] Port ${port} in use (attempt ${retryCount}/${MAX_PORT_RETRIES}), retrying in 2s...`);
       setTimeout(() => {
         server.close();
         server.listen(port, '127.0.0.1');
@@ -3456,21 +3492,23 @@ async function startServer(retryPort = null) {
     console.log(`  App Account: API key configured`);
     console.log('');
     setTimeout(() => {
-      try {
-        const firstRun = setupOpencodeConfig();
-        if (firstRun) {
-          const dashboardUrl = `http://localhost:${port}`;
-          if (process.platform === 'win32') {
-            require('child_process').exec(`start "" "${dashboardUrl}"`);
-          } else if (process.platform === 'darwin') {
-            require('child_process').exec(`open "${dashboardUrl}"`);
-          } else {
-            require('child_process').exec(`xdg-open "${dashboardUrl}"`);
+      (async () => {
+        try {
+          const firstRun = await setupOpencodeConfig();
+          if (firstRun) {
+            const dashboardUrl = `http://localhost:${port}`;
+            if (process.platform === 'win32') {
+              require('child_process').exec(`start "" "${dashboardUrl}"`);
+            } else if (process.platform === 'darwin') {
+              require('child_process').exec(`open "${dashboardUrl}"`);
+            } else {
+              require('child_process').exec(`xdg-open "${dashboardUrl}"`);
+            }
           }
+        } catch (e) {
+          console.error(`[Opencode] Setup error: ${e.message}`);
         }
-      } catch (e) {
-        console.error(`[Opencode] Setup error: ${e.message}`);
-      }
+      })();
     }, 100);
   });
 }
