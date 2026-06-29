@@ -1108,6 +1108,21 @@ function stripReasoningContent(payload) {
   }
 }
 
+// Normalize the `thinking` field on an outgoing request payload.
+// The @ai-sdk/openai-compatible provider camelCases keys written as
+// snake_case in opencode.json (e.g. budget_tokens -> budgetTokens), but the
+// UMANS upstream (Pydantic) expects snake_case and rejects camelCase keys as
+// extra inputs, which also breaks the discriminated union on thinking.type.
+// Rewrite camelCase keys back to the snake_case form the upstream accepts.
+function normalizeThinkingPayload(payload) {
+  const t = payload?.thinking;
+  if (!t || typeof t !== 'object' || Array.isArray(t)) return;
+  if (t.budgetTokens !== undefined && t.budget_tokens === undefined) {
+    t.budget_tokens = t.budgetTokens;
+    delete t.budgetTokens;
+  }
+}
+
 function limitImagesInMessages(payload, maxImages) {
   if (!maxImages || maxImages <= 0) return;
 
@@ -1158,13 +1173,17 @@ function limitImagesInMessages(payload, maxImages) {
 // and replaces the image part with the text description returned by the
 // handoff model before forwarding the request to the original model.
 
-const DEFAULT_VISION_HANDOFF_PROMPT = `The user has pasted an image into their chat. Describe what you see as if you are directly observing the image. Be thorough but concise. Include:
-- All visible elements (objects, text, UI elements, people, etc.)
-- Exact transcription of any text
-- The context and purpose of the image
-- Any relevant technical details
+const DEFAULT_VISION_HANDOFF_PROMPT = `You are an image captioning module. Your output is fed verbatim into another model as the sole visual content of the image — it cannot see the image itself, only your text.
 
-Describe it naturally, as if explaining to someone what you're looking at right now.`;
+Produce a factual, third-person description of the image contents. Do NOT use first person ("I see..."). Do NOT address the reader. Do NOT speculate about what the user wants.
+
+Cover:
+- Type of image (screenshot, photograph, diagram, UI, log, etc.) and overall layout
+- All visible elements (objects, UI widgets, people, regions) and their spatial arrangement
+- Exact transcription of any visible text, code, or labels (use quotes)
+- Salient technical details (file paths, error messages, colors, dimensions, filenames)
+
+Write as a single coherent description, not a bulleted list. Be thorough but concise.`;
 
 function needsVisionHandoff(resolvedModel) {
   if (!config.visionHandoffEnabled) return false;
@@ -1243,7 +1262,7 @@ async function analyzeImageViaHandoff(dataUri, slot, reqStart, sessNum, imageInd
       {
         role: 'user',
         content: [
-          { type: 'text', text: 'What do you see in this image?' },
+          { type: 'text', text: 'Transcribe and describe this image for downstream processing.' },
           { type: 'image_url', image_url: { url: dataUri } },
         ],
       },
@@ -1296,10 +1315,15 @@ async function performVisionHandoff(payload, resolvedModel, slot, sessNum, reqSt
     imageParts.map((ip, i) => analyzeImageViaHandoff(ip.dataUri, slot, reqStart, sessNum, i))
   );
 
-  // Replace each image part in-place with a text part
+  // Replace each image part in-place with a text part. The label is phrased
+  // so the primary model treats the description as authoritative image
+  // content (it cannot see the image) rather than as user commentary or a
+  // previous assistant turn to be second-guessed.
   for (let i = 0; i < imageParts.length; i++) {
     const { container, index } = imageParts[i];
-    const label = imageParts.length > 1 ? `[User pasted image ${i + 1}]\n` : '[User pasted image]\n';
+    const label = imageParts.length > 1
+      ? `[Image ${i + 1} content — analyzed by vision module, shown as text because the active model cannot see images:]\n`
+      : '[Image content — analyzed by vision module, shown as text because the active model cannot see images:]\n';
     container[index] = {
       type: 'text',
       text: label + descriptions[i],
@@ -1771,7 +1795,7 @@ function buildReasoningVariants(reasoningCaps) {
     if (lvl === 'none') continue;
     const budget = REASONING_LEVEL_BUDGETS[lvl];
     if (!budget) continue;
-    variants[lvl] = { thinking: { type: 'enabled', budgetTokens: budget } };
+    variants[lvl] = { thinking: { type: 'enabled', budget_tokens: budget } };
     added = true;
   }
   return added ? variants : null;
@@ -2159,17 +2183,18 @@ function readBody(req) {
 }
 
 function writeJSON(res, statusCode, payload) {
-  let jsonStr;
-  try { jsonStr = JSON.stringify(payload); }
-  catch (e) {
-    if (!res.headersSent) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end('{"error":{"message":"encode failed","type":"server_error"}}');
-    }
+  // If headers were already flushed (e.g. SSE keepalive during vision
+  // handoff), we can no longer set a status code. Emit the error as an
+  // OpenAI-style SSE error event so streaming clients still see it.
+  if (res.headersSent) {
+    try {
+      res.write(`data: ${JSON.stringify({ error: payload && payload.error ? payload.error : payload })}\n\n`);
+      res.end();
+    } catch { try { res.end(); } catch {} }
     return;
   }
-  try { res.writeHead(statusCode, { 'Content-Type': 'application/json' }); res.end(jsonStr); }
-  catch (e) { /* headers already sent or connection closed — nothing to do */ }
+  try { res.writeHead(statusCode, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(payload)); }
+  catch (e) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end('{"error":{"message":"encode failed","type":"server_error"}}'); }
 }
 
 function writeOpenAIError(res, statusCode, message, errorType, code) {
@@ -2361,6 +2386,7 @@ async function proxyAnthropicRequest(res, payload, requestedModel, writeError, w
 
   const resolvedAnthropicModel = resolveModelId(requestedModel);
   payload.model = resolvedAnthropicModel;
+  normalizeThinkingPayload(payload);
   await performVisionHandoff(payload, resolvedAnthropicModel, slot, sessNum, reqStart);
 
   try {
@@ -2507,11 +2533,33 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
   }
 
   const modelInfo = modelInfoMap[resolvedModel] || {};
-  limitImagesInMessages(payload, config.maxImages);
+  const isHandoffModel = needsVisionHandoff(resolvedModel);
+  if (!isHandoffModel) limitImagesInMessages(payload, config.maxImages);
 
   const reasoningCaps = modelInfo.capabilities?.reasoning;
   if (reasoningCaps?.supported === true && reasoningCaps.can_disable === false) {
     payload.thinking = { type: 'adaptive' };
+  }
+
+  normalizeThinkingPayload(payload);
+
+  // Vision handoff can take several seconds (an extra upstream round-trip
+  // per image). For streaming requests, flush SSE headers + a keepalive
+  // comment before the handoff so the client (or the Sleev gateway in front
+  // of us) doesn't time out waiting for the first byte and retry the
+  // request — which would produce duplicate sessions.
+  const willHandoff = needsVisionHandoff(resolvedModel) && collectImageParts(payload).length > 0;
+  let headersFlushed = false;
+  if (willHandoff && requestedStream && !res.headersSent) {
+    try {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      });
+      res.write(': keepalive — analyzing image via vision handoff\n\n');
+      headersFlushed = true;
+    } catch { /* client may have disconnected */ }
   }
 
   await performVisionHandoff(payload, resolvedModel, slot, sessNum, reqStart);
@@ -2583,27 +2631,29 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
             }
             if (clientGone) return { retry: false };
             const sanitizedSse = sanitizeSseResponse(rawSse);
-            res.writeHead(resp.status, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
+            if (!headersFlushed) res.writeHead(resp.status, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
             try { res.end(sanitizedSse); } catch {}
           } else {
             // Shell tool guard disabled: pipe SSE directly to client for real-time streaming
-            res.writeHead(resp.status, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
+            if (!headersFlushed) res.writeHead(resp.status, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
             await pipeBodyToResponse(resp.body, res);
           }
         } else {
           let bodyText = await readBodyText(resp.body);
           const skipHeaders = new Set(['content-length', 'transfer-encoding', 'connection', 'keep-alive', 'content-encoding']);
           if (requestedStream) skipHeaders.add('content-type');
-          for (const [key, values] of Object.entries(resp.headers)) {
-            if (skipHeaders.has(key.toLowerCase())) continue;
-            res.setHeader(key, values);
+          if (!headersFlushed) {
+            for (const [key, values] of Object.entries(resp.headers)) {
+              if (skipHeaders.has(key.toLowerCase())) continue;
+              res.setHeader(key, values);
+            }
           }
           let parsed = null;
           try { parsed = JSON.parse(bodyText); } catch (e) { /* ignore */ }
           if (parsed && config.shellToolGuard) parsed = sanitizeChatCompletionResponse(parsed);
           if (requestedStream) {
-            res.writeHead(resp.status, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
-            res.end(parsed ? JSON.stringify(parsed) : `data: ${JSON.stringify({ object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: bodyText }, finish_reason: 'stop' }] })}\n\n`);
+            if (!headersFlushed) res.writeHead(resp.status, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
+            try { res.end(parsed ? JSON.stringify(parsed) : `data: ${JSON.stringify({ object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: bodyText }, finish_reason: 'stop' }] })}\n\n`); } catch {}
           } else {
             const finalBody = parsed ? JSON.stringify(parsed) : bodyText;
             res.writeHead(resp.status);
