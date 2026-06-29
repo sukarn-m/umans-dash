@@ -86,7 +86,7 @@ The proxy exposes `/v1/messages` (and `/messages`) for Anthropic-compatible clie
 - `proxyAnthropicRequest()` (line 2301) — Acquires a key from the pool (with session affinity), forwards the Anthropic request body to `upstream.messages()`, and pipes the response directly back to the client via `await pipeBodyToResponse()`.
 - `handleAnthropicMessages()` (line 2390) — Entry point for `/v1/messages`; applies `limitImagesInMessages` cap, then queues or dispatches.
 - No shell-tool guard or cache for Anthropic pass-through (upstream handles these).
-- **Vision handoff** is applied before the upstream call: if the resolved model has `supports_vision: "via-handoff"`, images are extracted and sent to the handoff model (default `umans-kimi-k2.7`), then replaced with text descriptions in the payload.
+- **Vision handoff** is applied before the upstream call: if the resolved model has `supports_vision: "via-handoff"`, images are extracted and sent to the handoff model (default `umans-coder`), then replaced with text descriptions in the payload.
 - **Key health**: `markHealthy()` is called on success (line 2379); `markUnhealthy()` only on 503 upstream or network-level fetch failures (not on 500, which is usually a payload issue).
 - **Concurrency queue**: Anthropic requests participate in the same bounded queue as OpenAI requests.
 
@@ -96,10 +96,10 @@ Models whose `capabilities.supports_vision === "via-handoff"` (e.g. `umans-glm-5
 
 1. `needsVisionHandoff(resolvedModel)` (line 1154) — checks `modelInfoMap` for `via-handoff` flag.
 2. `collectImageParts(payload)` (line 1173) — walks `payload.system` and `payload.messages`, collecting image parts in both OpenAI (`image_url`) and Anthropic (`image` with `source.base64`/`source.url`) formats.
-3. `analyzeImageViaHandoff(dataUri, slot, ...)` (line 1219) — makes a non-streaming `chatCompletions` call to the handoff model (default `umans-kimi-k2.7`) with a system analysis prompt + the image.
+3. `analyzeImageViaHandoff(dataUri, slot, ...)` (line 1219) — makes a non-streaming `chatCompletions` call to the handoff model (default `umans-coder`) with a system analysis prompt + the image.
 4. `performVisionHandoff(payload, resolvedModel, ...)` (line 1270) — replaces each image part in-place with a `{type: "text", text: "[Image content — analyzed by vision module, shown as text because the active model cannot see images:]\n<description>"}` block. The label makes clear to the primary model that the text is authoritative image content, not user commentary.
 
-**Config keys**: `VISION_HANDOFF_ENABLED` (default `true`), `VISION_HANDOFF_MODEL` (default `umans-kimi-k2.7`), `VISION_HANDOFF_PROMPT` (default built-in analysis prompt when empty).
+**Config keys**: `VISION_HANDOFF_ENABLED` (default `true`), `VISION_HANDOFF_MODEL` (default `umans-coder`), `VISION_HANDOFF_PROMPT` (default built-in analysis prompt when empty).
 
 Applied to both the OpenAI path (`proxyChatRequest`) and the Anthropic path (`proxyAnthropicRequest`) after model resolution and before the upstream call. On the OpenAI path, the handoff runs after the cache check, so cache hits skip the handoff entirely.
 - Concurrency queue supports Anthropic requests alongside OpenAI requests.

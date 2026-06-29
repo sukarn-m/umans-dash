@@ -515,7 +515,7 @@ function loadConfig() {
     disabledModels: Array.isArray(rawConfig.DISABLED_MODELS) ? rawConfig.DISABLED_MODELS : [],
     locale: rawConfig.LOCALE || null,
     visionHandoffEnabled: rawConfig.VISION_HANDOFF_ENABLED !== false,
-    visionHandoffModel: rawConfig.VISION_HANDOFF_MODEL || 'umans-kimi-k2.7',
+    visionHandoffModel: rawConfig.VISION_HANDOFF_MODEL || 'umans-coder',
     visionHandoffPrompt: rawConfig.VISION_HANDOFF_PROMPT || '',
     sleevEnabled: rawConfig.SLEEV_ENABLED === true,
     shellToolGuard: rawConfig.SHELL_TOOL_GUARD === true,
@@ -567,7 +567,7 @@ function saveConfig(cfg) {
     DISABLED_MODELS: cfg.disabledModels || [],
     LOCALE: cfg.locale || null,
     VISION_HANDOFF_ENABLED: cfg.visionHandoffEnabled !== false,
-    VISION_HANDOFF_MODEL: cfg.visionHandoffModel || 'umans-kimi-k2.7',
+    VISION_HANDOFF_MODEL: cfg.visionHandoffModel || 'umans-coder',
     VISION_HANDOFF_PROMPT: cfg.visionHandoffPrompt || '',
     SLEEV_ENABLED: cfg.sleevEnabled === true,
     SHELL_TOOL_GUARD: cfg.shellToolGuard === true,
@@ -1169,7 +1169,7 @@ function limitImagesInMessages(payload, maxImages) {
 // ── Vision handoff ──────────────────────────────────────────────────────────
 // Models whose capabilities.supports_vision === "via-handoff" cannot process
 // images natively. The proxy intercepts images in requests to such models,
-// sends each image to a vision-capable handoff model (default: umans-kimi-k2.7),
+// sends each image to a vision-capable handoff model (default: umans-coder),
 // and replaces the image part with the text description returned by the
 // handoff model before forwarding the request to the original model.
 
@@ -1251,7 +1251,7 @@ function collectImageParts(payload) {
 }
 
 async function analyzeImageViaHandoff(dataUri, slot, reqStart, sessNum, imageIndex) {
-  const handoffModel = config.visionHandoffModel || 'umans-kimi-k2.7';
+  const handoffModel = config.visionHandoffModel || 'umans-coder';
   const prompt = config.visionHandoffPrompt || DEFAULT_VISION_HANDOFF_PROMPT;
 
   const handoffPayload = {
@@ -1307,7 +1307,7 @@ async function performVisionHandoff(payload, resolvedModel, slot, sessNum, reqSt
   const imageParts = collectImageParts(payload);
   if (imageParts.length === 0) return 0;
 
-  const handoffModel = config.visionHandoffModel || 'umans-kimi-k2.7';
+  const handoffModel = config.visionHandoffModel || 'umans-coder';
   console.log(`${reqStart} [Session#${sessNum}>${slot.name}]-[${resolvedModel}]-vision-handoff: ${imageParts.length} image(s) → ${handoffModel}`);
 
   // Analyze all images in parallel
@@ -1699,7 +1699,7 @@ function findModelsDevEntry(catalog, umansId) {
   const candidates = umansIdCandidates(umansId);
 
   // UMANS-specific models are present in models.dev under the "umans-ai"
-  // provider with the exact same id (e.g. "umans-kimi-k2.7"). Prefer that.
+  // provider with the exact same id (e.g. "umans-coder"). Prefer that.
   if (catalog['umans-ai'] && catalog['umans-ai'].models) {
     for (const candidate of candidates) {
       const model = catalog['umans-ai'].models[candidate];
@@ -2788,7 +2788,7 @@ async function handleRequest(req, res) {
         freegenPrompt: config.freegenPrompt || '',
         disabledModels: config.disabledModels || [],
         visionHandoffEnabled: config.visionHandoffEnabled !== false,
-        visionHandoffModel: config.visionHandoffModel || 'umans-kimi-k2.7',
+        visionHandoffModel: config.visionHandoffModel || 'umans-coder',
         visionHandoffPrompt: config.visionHandoffPrompt || '',
         sleevEnabled: config.sleevEnabled === true,
         shellToolGuard: config.shellToolGuard === true,

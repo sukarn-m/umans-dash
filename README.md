@@ -155,7 +155,7 @@ The handoff applies to both the OpenAI (`/v1/chat/completions`) and Anthropic (`
 | Field | Description | Default |
 |---|---|---|
 | `VISION_HANDOFF_ENABLED` | Toggle the handoff for all `via-handoff` models | `true` |
-| `VISION_HANDOFF_MODEL` | Vision-capable model used to analyze images | `umans-kimi-k2.7` |
+| `VISION_HANDOFF_MODEL` | Vision-capable model used to analyze images | `umans-coder` |
 | `VISION_HANDOFF_PROMPT` | Custom analysis system prompt (empty = built-in) | — |
 
 The built-in prompt instructs the handoff model to produce a factual, third-person description of the image as a single coherent paragraph — covering image type, visible elements and their spatial arrangement, exact transcription of text/code, and salient technical details.
