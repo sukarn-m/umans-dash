@@ -1,0 +1,11 @@
+# Runtime config (contains local settings, not for upstream)
+.config/
+
+# Logs
+.logs/
+
+# Cache
+.cache/
+
+# Update checker script (local tooling)
+update-check.py

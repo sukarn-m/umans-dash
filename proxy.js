@@ -8,7 +8,6 @@ const crypto = require('crypto');
 
 const UMANS_API_BASE = 'https://api.code.umans.ai/v1';
 const API_KEY_ENV_VAR = 'UMANS_API_KEY';
-const APP_BASE = 'https://app.umans.ai';
 const MODELS_DEV_CATALOG_URL = 'https://models.dev/api.json';
 
 const FREEGEN_PROMPT_SIGNER = 'https://prompt-signer.freegen.app/api/test';
@@ -74,10 +73,8 @@ function redactBodyJson(body) {
   }
 }
 
-const ERROR_LOG_LOCK = Promise.resolve();
 async function logHttpError(record) {
   initErrorLogger();
-  await ERROR_LOG_LOCK;
   const line = JSON.stringify({
     ts: new Date().toISOString(),
     ...record,
@@ -308,12 +305,26 @@ function writeAnthropicPassthroughError(res, statusCode, body) {
 
 let activeRequests = 0;
 let requestQueue = [];
+const MAX_QUEUE_SIZE = 256;
 
 let modelCatalogCache = null;
 let modelCatalogCacheTime = 0;
 let modelDisplayNameMap = {};
 let modelInfoMap = {};
 const MODEL_CATALOG_CACHE_TTL = 5 * 60 * 1000;
+let modelCatalogFetchPromise = null;
+
+function applyCatalogData(data) {
+  if (data && typeof data === 'object' && !Array.isArray(data.data)) {
+    modelDisplayNameMap = {};
+    modelInfoMap = {};
+    for (const [id, info] of Object.entries(data)) {
+      if (!info || typeof info !== 'object') continue;
+      modelInfoMap[id] = info;
+      if (info.display_name) modelDisplayNameMap[id] = info.display_name.replace(/^Umans\s+/i, '');
+    }
+  }
+}
 
 function getOrderedModelIds() {
   const ids = Object.keys(modelInfoMap);
@@ -355,9 +366,6 @@ let opencodeSetupTimeout = null;
 let opencodeSetupPending = false;
 
 // --- FreeGen background wallpaper state ---
-let freegenGenerating = false;
-let freegenGenerationPromise = null;
-let freegenLastError = null;
 
 const RATE_LIMIT_MAP = {};
 const rateLimitTimestamps = new Map();
@@ -478,7 +486,12 @@ function loadConfig() {
   const apiKey = rawConfig.API_KEY || process.env[API_KEY_ENV_VAR] || '';
 
   let keys = [];
-  if (apiKey) keys.push({ name: 'Default', key: apiKey, session: '' });
+  if (Array.isArray(rawConfig.KEYS)) {
+    keys = rawConfig.KEYS.filter(k => k && typeof k === 'object').map(k => ({ name: k.name || 'Default', key: k.key || '', session: k.session || '' }));
+  }
+  if (apiKey && !keys.some(k => k.key === apiKey)) {
+    keys.unshift({ name: 'Default', key: apiKey, session: '' });
+  }
   const rawModels = rawConfig.ENABLED_MODELS;
   const enabledModels = Array.isArray(rawModels) ? rawModels : [];
 
@@ -494,9 +507,6 @@ function loadConfig() {
     cacheTtl: parseDuration(rawConfig.CACHE_TTL || '60s') || 60000,
     cacheMaxSize: Math.max(0, rawConfig.CACHE_MAX_SIZE || 100),
     cacheEnabled: rawConfig.CACHE_ENABLED !== false,
-    email: rawConfig.EMAIL || '',
-    password: rawConfig.PASSWORD || '',
-    appSession: rawConfig.APP_SESSION || '',
     wallpaperSource: rawConfig.wallpaperSource || 'freegen',
     freegenPrompt: rawConfig.FREEGEN_PROMPT || 'epic cinematic landscape, mountains at sunset, vibrant colors, ultra detailed, 16:9 wallpaper',
     overrideConcurrency: Math.max(0, rawConfig.OVERRIDE_CONCURRENCY || 0),
@@ -542,14 +552,12 @@ function saveConfig(cfg) {
     API_KEY: cfg.apiKey,
     REQUEST_TIMEOUT: `${cfg.requestTimeout / (60 * 1000)}m`,
     API_KEYS: cfg.apiKeys,
+    KEYS: (cfg.keys || []).filter(k => k && (k.key || k.session)).map(k => ({ name: k.name || 'Default', key: k.key || '', session: k.session || '' })),
     ENABLED_MODELS: cfg.enabledModels,
     MODEL_DISPLAY_NAMES: cfg.modelDisplayNames || {},
     CACHE_TTL: `${(cfg.cacheTtl || 60000) / 1000}s`,
     CACHE_MAX_SIZE: cfg.cacheMaxSize || 100,
     CACHE_ENABLED: cfg.cacheEnabled !== false,
-    EMAIL: cfg.email || '',
-    PASSWORD: cfg.password || '',
-    APP_SESSION: cfg.appSession || '',
     wallpaperSource: cfg.wallpaperSource || 'freegen',
     FREEGEN_PROMPT: cfg.freegenPrompt || 'epic cinematic landscape, mountains at sunset, vibrant colors, ultra detailed, 16:9 wallpaper',
     OVERRIDE_CONCURRENCY: cfg.overrideConcurrency || 0,
@@ -938,454 +946,43 @@ async function handleI18n(req, res) {
 }
 
 let usageCache = { data: null, time: 0, ttl: 5 * 60 * 1000 };
-let usageHistoryCache = { data: null, time: 0, ttl: 5 * 60 * 1000 };
-let concurrencyCache = { concurrent: null, limit: null, user_id: null, time: 0, ttl: 5 * 60 * 1000 };
-
-function makeAppCookie(sessionToken) {
-  return `__Secure-authjs.session-token=${sessionToken}`;
-}
-
-function getUsageDbPath() {
-  return path.join(__dirname, '.cache', 'usage.db');
-}
-
-function toISODateString(d) {
-  if (typeof d === 'string') {
-    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
-    const iso = new Date(d);
-    if (isNaN(iso.getTime())) return null;
-    return iso.toISOString().slice(0, 10);
-  }
-  if (typeof d === 'number') {
-    const iso = new Date(d < 1e10 ? d * 1000 : d);
-    if (isNaN(iso.getTime())) return null;
-    return iso.toISOString().slice(0, 10);
-  }
-  if (!(d instanceof Date) || isNaN(d.getTime())) return null;
-  return d.toISOString().slice(0, 10);
-}
-
-function getUsageHistoryDateRange(now) {
-  const n = now || new Date();
-  const to = toISODateString(n);
-  const from = toISODateString(new Date(n.getTime() - 89 * 24 * 60 * 60 * 1000));
-  return { from, to, today: to };
-}
-
-function generateDateStrings(from, to) {
-  const list = [];
-  const start = new Date(`${from}T00:00:00Z`);
-  const end = new Date(`${to}T00:00:00Z`);
-  if (isNaN(start.getTime()) || isNaN(end.getTime())) return list;
-  for (let t = start.getTime(); t <= end.getTime(); t += 24 * 60 * 60 * 1000) {
-    list.push(toISODateString(new Date(t)));
-  }
-  return list;
-}
-
-function toContiguousRanges(dates) {
-  if (!dates.length) return [];
-  const sorted = [...dates].sort();
-  const ranges = [];
-  let start = sorted[0];
-  let prev = sorted[0];
-  for (let i = 1; i < sorted.length; i++) {
-    const curr = sorted[i];
-    const prevDate = new Date(`${prev}T00:00:00Z`);
-    const currDate = new Date(`${curr}T00:00:00Z`);
-    if (currDate.getTime() - prevDate.getTime() === 24 * 60 * 60 * 1000) {
-      prev = curr;
-    } else {
-      ranges.push([start, prev]);
-      start = curr;
-      prev = curr;
-    }
-  }
-  ranges.push([start, prev]);
-  return ranges;
-}
-
-function normalizeUsageBucket(bucket) {
-  if (!bucket || typeof bucket !== 'object') return null;
-  const dateField = bucket.bucket || bucket.timestamp || bucket.date || bucket.time || bucket.day;
-  if (!dateField) return null;
-  const d = toISODateString(dateField);
-  if (!d) return null;
-  return {
-    bucket: d,
-    requests: bucket.requests ?? bucket.request_count ?? 0,
-    tokens_in: bucket.tokens_in ?? bucket.input_tokens ?? 0,
-    tokens_out: bucket.tokens_out ?? bucket.output_tokens ?? 0,
-    tokens_cached_read: bucket.tokens_cached_read ?? bucket.tokens_cached ?? bucket.cached_tokens ?? 0,
-  };
-}
-
-let usageDb = null;
-let usageDbFailed = false;
-
-function getSqliteImpl() {
-  if (IS_BUN) {
-    try { return require('bun:sqlite'); } catch (e) {
-      console.warn('[usage-cache] bun:sqlite not available:', e.message);
-    }
-  }
-  // Node.js 22+ built-in SQLite
-  if (typeof process.emitWarning === 'function') {
-    const original = process.emitWarning;
-    process.emitWarning = () => {};
-    try { return require('node:sqlite'); } finally { process.emitWarning = original; }
-  }
-  try { return require('node:sqlite'); } catch {}
-  return null;
-}
-
-function dbExec(db, sql) {
-  if (db.exec) return db.exec(sql);
-  if (db.run) return db.run(sql);
-  if (db.execSync) return db.execSync(sql);
-  throw new Error('Database has no exec/run method');
-}
-
-function dbPrepare(db, sql) {
-  if (db.prepare) return db.prepare(sql);
-  if (db.query) return db.query(sql);
-  if (db.prepareV2) return db.prepareV2(sql);
-  throw new Error('Database has no prepare/query method');
-}
-
-function openUsageDb() {
-  if (usageDb) return usageDb;
-  if (usageDbFailed) return null;
-  try {
-    const impl = getSqliteImpl();
-    if (!impl) throw new Error('No built-in SQLite module available');
-    const dbPath = getUsageDbPath();
-    const dir = path.dirname(dbPath);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    let db;
-    if (impl.DatabaseSync) db = new impl.DatabaseSync(dbPath);
-    else if (impl.Database) db = new impl.Database(dbPath);
-    else throw new Error('Unsupported SQLite module');
-    dbExec(db, `
-      CREATE TABLE IF NOT EXISTS usage_history (
-        bucket TEXT PRIMARY KEY,
-        requests INTEGER NOT NULL DEFAULT 0,
-        tokens_in INTEGER NOT NULL DEFAULT 0,
-        tokens_out INTEGER NOT NULL DEFAULT 0,
-        tokens_cached_read INTEGER NOT NULL DEFAULT 0,
-        created_at INTEGER DEFAULT (strftime('%s', 'now'))
-      )
-    `);
-    usageDb = db;
-    return db;
-  } catch (e) {
-    usageDbFailed = true;
-    console.warn('[usage-cache] SQLite not available, using memory-only cache:', e.message);
-    return null;
-  }
-}
-
-function loadUsageHistoryBuckets(db, from, to) {
-  const map = {};
-  try {
-    const stmt = dbPrepare(db, 'SELECT * FROM usage_history WHERE bucket >= ? AND bucket <= ? ORDER BY bucket ASC');
-    const rows = stmt.all(from, to);
-    for (const row of rows) {
-      const b = normalizeUsageBucket(row);
-      if (b) map[b.bucket] = b;
-    }
-  } catch (e) {
-    console.warn('[usage-cache] failed to load cached buckets:', e.message);
-  }
-  return map;
-}
-
-function getEarliestDataDate(db) {
-  try {
-    const stmt = dbPrepare(db, 'SELECT bucket FROM usage_history WHERE requests > 0 ORDER BY bucket ASC LIMIT 1');
-    const row = stmt.get();
-    return row ? row.bucket : null;
-  } catch (e) {
-    console.warn('[usage-cache] failed to get earliest data date:', e.message);
-    return null;
-  }
-}
-
-function upsertUsageHistoryBucket(db, bucket) {
-  if (!bucket || !bucket.bucket) return false;
-  try {
-    const stmt = dbPrepare(db, `
-      INSERT INTO usage_history (bucket, requests, tokens_in, tokens_out, tokens_cached_read)
-      VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(bucket) DO UPDATE SET
-        requests = excluded.requests,
-        tokens_in = excluded.tokens_in,
-        tokens_out = excluded.tokens_out,
-        tokens_cached_read = excluded.tokens_cached_read,
-        created_at = strftime('%s', 'now')
-    `);
-    stmt.run(
-      bucket.bucket,
-      bucket.requests || 0,
-      bucket.tokens_in || 0,
-      bucket.tokens_out || 0,
-      bucket.tokens_cached_read || 0
-    );
-    return true;
-  } catch (e) {
-    console.warn('[usage-cache] failed to cache bucket:', e.message);
-    return false;
-  }
-}
-
-function looksLikeUsageBucketArray(arr) {
-  if (!Array.isArray(arr) || arr.length === 0) return false;
-  return arr.some(item => item && typeof item === 'object' &&
-    (item.bucket || item.date || item.timestamp || item.time || item.day) &&
-    (item.requests !== undefined || item.request_count !== undefined ||
-     item.tokens_in !== undefined || item.input_tokens !== undefined ||
-     item.tokens_out !== undefined || item.output_tokens !== undefined));
-}
-
-function findUsageBuckets(obj, depth = 0) {
-  if (depth > 5 || !obj || typeof obj !== 'object') return null;
-  if (looksLikeUsageBucketArray(obj)) return obj;
-  for (const key of Object.keys(obj)) {
-    const found = findUsageBuckets(obj[key], depth + 1);
-    if (found) return found;
-  }
-  return null;
-}
-
-function extractUsageBuckets(data) {
-  if (!data) return null;
-  if (Array.isArray(data)) return looksLikeUsageBucketArray(data) ? data : null;
-  // Fast path for known shapes
-  const fast = data.buckets || data.entries || data.data ||
-               (data.history && (data.history.buckets || data.history.entries || data.history.data)) ||
-               (data.usage && (data.usage.buckets || data.usage.entries || data.usage.data));
-  if (Array.isArray(fast) && fast.length > 0) return fast;
-  // Recursive fallback
-  return findUsageBuckets(data);
-}
-
-async function fetchHistoryRange(from, to) {
-  const fromIso = `${from}T00:00:00Z`;
-  const toIso = `${to}T23:59:59Z`;
-  const url = `https://app.umans.ai/api/usage/history?from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}&granularity=day`;
-  console.log(`[usage-history] GET ${url}`);
-  const resp = await fetch(url, {
-    headers: { 'Cookie': makeAppCookie(config.appSession), 'Accept': 'application/json' },
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!resp.ok) {
-    console.warn(`[usage-history] upstream returned ${resp.status} for ${from}..${to}`);
-    return null;
-  }
-  const data = await resp.json();
-  const buckets = extractUsageBuckets(data);
-  if (!buckets) {
-    const keys = data && typeof data === 'object' ? Object.keys(data).join(',') : String(data);
-    console.warn(`[usage-history] no bucket array found in response. top-level keys: ${keys}`);
-  }
-  return buckets ? { buckets } : null;
-}
+let lastConcurrency = { concurrent: 0, limit: null, user_id: null };
 
 async function fetchUsage() {
-  if (!config.appSession) return null;
+  if (!config.apiKey) return null;
   if (usageCache.data && Date.now() - usageCache.time < usageCache.ttl) return usageCache.data;
   try {
-    const resp = await fetch('https://app.umans.ai/api/usage?context=personal', {
-      headers: { 'Cookie': makeAppCookie(config.appSession), 'Accept': 'application/json' },
+    const resp = await fetch(`${config.upstreamBaseURL}/usage`, {
+      headers: { 'Authorization': `Bearer ${config.apiKey}`, 'Accept': 'application/json' },
       signal: AbortSignal.timeout(10000),
     });
-    if (!resp.ok) return null;
+    if (!resp.ok) return usageCache.data;
     const data = await resp.json();
     usageCache = { data, time: Date.now(), ttl: 5 * 60 * 1000 };
     return data;
   } catch (e) { return usageCache.data; }
 }
 
-async function fetchUsageHistory() {
-  if (!config.appSession) {
-    console.warn('[usage-history] no app session, skipping fetch');
-    return null;
-  }
-  if (usageHistoryCache.data && Date.now() - usageHistoryCache.time < usageHistoryCache.ttl) {
-    console.log('[usage-history] serving from in-memory cache', usageHistoryCache.data.buckets?.length || 0, 'buckets');
-    return usageHistoryCache.data;
-  }
-  const range = getUsageHistoryDateRange();
-  const db = openUsageDb();
-  const cached = db ? loadUsageHistoryBuckets(db, range.from, range.to) : {};
-  delete cached[range.today];
-
-  // Determine the earliest day the API actually has data for, so we don't
-  // endlessly re-request older days that the API will never return.
-  // Once at least one non-zero day has been cached, any missing day older than
-  // the oldest cached day is treated as a pre-account "no data" day and is
-  // backfilled as a zero bucket instead of being fetched.
-  const cachedDates = Object.keys(cached).sort();
-  const oldestCachedDate = cachedDates.length > 0 ? cachedDates[0] : null;
-  // Also check the DB for the earliest day with real (non-zero) usage, which
-  // survives even if older zero-rows get evicted or the window rolls past them.
-  let earliestDataDate = oldestCachedDate;
-  if (db) {
-    const earliestFromDb = getEarliestDataDate(db);
-    if (earliestFromDb) {
-      earliestDataDate = earliestDataDate
-        ? [earliestDataDate, earliestFromDb].sort()[0]
-        : earliestFromDb;
-    }
-  }
-  earliestDataDate = earliestDataDate || null;
-
-  const allDates = generateDateStrings(range.from, range.to);
-  const missing = allDates.filter(d => !cached[d]);
-  // Days older than the earliest known data day are pre-account days the API
-  // will never return. Backfill them as zeros and persist so we stop asking.
-  const preAccount = missing.filter(d => earliestDataDate && d < earliestDataDate);
-  const toFetch = missing.filter(d => !(earliestDataDate && d < earliestDataDate));
-  for (const d of preAccount) {
-    if (d === range.today) continue;
-    const zero = { bucket: d, requests: 0, tokens_in: 0, tokens_out: 0, tokens_cached_read: 0 };
-    cached[d] = zero;
-    if (db) upsertUsageHistoryBucket(db, zero);
-  }
-  console.log(`[usage-history] range ${range.from}..${range.today}, cached ${Object.keys(cached).length}, missing ${missing.length}, toFetch ${toFetch.length}, preAccount ${preAccount.length}`);
-  const mergedMap = { ...cached };
-  let fetchedAny = false;
-  let failedChunks = 0;
-  if (toFetch.length > 0) {
-    const ranges = toContiguousRanges(toFetch);
-    console.log(`[usage-history] fetching ${ranges.length} chunk(s):`, ranges);
-    for (const [rFrom, rTo] of ranges) {
-      try {
-        const data = await fetchHistoryRange(rFrom, rTo);
-        if (data?.buckets) {
-          fetchedAny = true;
-          console.log(`[usage-history] chunk ${rFrom}..${rTo} returned ${data.buckets.length} raw buckets`);
-          const returnedDates = new Set();
-          for (const raw of data.buckets) {
-            const bucket = normalizeUsageBucket(raw);
-            if (!bucket) {
-              console.warn('[usage-history] skipped unparseable bucket:', raw);
-              continue;
-            }
-            mergedMap[bucket.bucket] = bucket;
-            returnedDates.add(bucket.bucket);
-            if (db && bucket.bucket !== range.today) {
-              upsertUsageHistoryBucket(db, bucket);
-            }
-          }
-          // The API omits zero-usage days, so cache them explicitly to avoid re-requesting.
-          for (const d of generateDateStrings(rFrom, rTo)) {
-            if (d !== range.today && !returnedDates.has(d)) {
-              const zero = { bucket: d, requests: 0, tokens_in: 0, tokens_out: 0, tokens_cached_read: 0 };
-              mergedMap[d] = zero;
-              if (db) upsertUsageHistoryBucket(db, zero);
-            }
-          }
-        }
-      } catch (e) {
-        failedChunks++;
-        console.warn(`[usage-history] chunk ${rFrom}..${rTo} failed:`, e.message);
-        // Continue with the next chunk instead of aborting entirely.
-      }
-    }
-  }
-  if (!fetchedAny && failedChunks > 0 && Object.keys(mergedMap).length === 0) {
-    console.warn('[usage-history] all chunks failed and nothing cached, returning stale cache');
-    // Don't update usageHistoryCache so the next poll can retry sooner.
-    return usageHistoryCache.data;
-  }
-  if (!fetchedAny && Object.keys(mergedMap).length === 0) {
-    console.warn('[usage-history] nothing fetched and nothing cached, returning stale cache');
-    return usageHistoryCache.data;
-  }
-  const buckets = Object.keys(mergedMap).sort().reverse().map(d => mergedMap[d]);
-  console.log(`[usage-history] returning ${buckets.length} buckets`);
-  const result = { buckets };
-  usageHistoryCache = { data: result, time: Date.now(), ttl: 5 * 60 * 1000 };
-  return result;
-}
-
 async function fetchConcurrency() {
-  const apiKey = config?.apiKey || '';
-  const baseURL = config?.upstreamBaseURL || UMANS_API_BASE;
-  if (!apiKey) return { concurrent: 0, limit: null, user_id: null };
-  if (concurrencyCache.concurrent !== null && Date.now() - concurrencyCache.time < concurrencyCache.ttl) {
-    return { concurrent: concurrencyCache.concurrent, limit: concurrencyCache.limit, user_id: concurrencyCache.user_id };
-  }
-  try {
-    const resp = await fetch(`${baseURL}/usage`, {
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'application/json' },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!resp.ok) return { concurrent: 0, limit: null, user_id: null };
-    const data = await resp.json();
-    const concurrent = data?.usage?.concurrent_sessions ?? 0;
-    const limit = data?.limits?.concurrency?.limit ?? null;
-    const user_id = data?.user_id ?? null;
-    concurrencyCache = { concurrent, limit, user_id, time: Date.now(), ttl: 5 * 60 * 1000 };
-    return { concurrent, limit, user_id };
-  } catch (e) {
-    if (concurrencyCache.concurrent !== null) return { concurrent: concurrencyCache.concurrent, limit: concurrencyCache.limit, user_id: concurrencyCache.user_id };
-    return { concurrent: 0, limit: null, user_id: null };
-  }
+  const data = await fetchUsage();
+  if (!data) return { concurrent: 0, limit: null, user_id: null };
+  const concurrent = data?.usage?.concurrent_sessions ?? 0;
+  const limit = data?.limits?.concurrency?.limit ?? null;
+  const user_id = data?.user_id ?? null;
+  lastConcurrency = { concurrent, limit, user_id };
+  return { concurrent, limit, user_id };
 }
 
 function getEffectiveConcurrency() {
-  const apiLimit = concurrencyCache.limit;
-  const apiConcurrent = concurrencyCache.concurrent || 0;
-  const apiUserId = concurrencyCache.user_id || null;
+  const apiLimit = lastConcurrency.limit;
+  const apiConcurrent = lastConcurrency.concurrent || 0;
+  const apiUserId = lastConcurrency.user_id || null;
   const override = config?.overrideConcurrency || 0;
   if (override > 0) {
     const effectiveLimit = apiLimit !== null ? Math.min(override, apiLimit) : override;
     return { concurrent: apiConcurrent, limit: effectiveLimit, overridden: true, user_id: apiUserId };
   }
   return { concurrent: apiConcurrent, limit: apiLimit, overridden: false, user_id: apiUserId };
-}
-
-async function loginToApp() {
-  if (!config.email || !config.password) return false;
-  try {
-    const csrfResp = await fetch('https://app.umans.ai/api/auth/csrf', {
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!csrfResp.ok) return false;
-    const csrfData = await csrfResp.json();
-    const csrfToken = csrfData.csrfToken;
-    if (!csrfToken) return false;
-    const setCookie = csrfResp.headers.get('set-cookie') || '';
-    const cookieMatch = setCookie.match(/__Host-authjs\.csrf-token=([^;]+)/);
-    const csrfCookie = cookieMatch ? `__Host-authjs.csrf-token=${cookieMatch[1]}` : '';
-
-    const loginResp = await fetch('https://app.umans.ai/api/auth/callback/credentials', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Cookie': csrfCookie,
-      },
-      body: new URLSearchParams({
-        csrfToken,
-        email: config.email,
-        password: config.password,
-        callbackUrl: 'https://app.umans.ai/billing',
-        json: 'true',
-      }).toString(),
-      signal: AbortSignal.timeout(15000),
-      redirect: 'manual',
-    });
-    const loginCookies = loginResp.headers.get('set-cookie') || '';
-    const sessionMatch = loginCookies.match(/__Secure-authjs\.session-token=([^;]+)/);
-    if (sessionMatch) {
-      config.appSession = sessionMatch[1];
-      debouncedSaveConfig(config);
-      return true;
-    }
-    return false;
-  } catch (e) { return false; }
 }
 
 const msgText = (m) => typeof m.content === 'string' ? m.content : (Array.isArray(m.content) ? m.content.find(p => p?.type === 'text')?.text || '' : '');
@@ -1479,10 +1076,9 @@ class KeyPool {
 function fingerprintPayload(payload) {
   const msgs = payload?.messages;
   if (!Array.isArray(msgs)) return null;
-  const text = (m) => typeof m.content === 'string' ? m.content : (Array.isArray(m.content) ? m.content.find(p => p?.type === 'text')?.text || '' : '');
   const idx = msgs.findIndex(m => m.role === 'user');
   if (idx < 0) return null;
-  const raw = text(msgs[idx]);
+  const raw = msgText(msgs[idx]);
   return crypto.createHash('md5').update(raw).digest('hex').slice(0, 12);
 }
 
@@ -1651,7 +1247,11 @@ async function analyzeImageViaHandoff(dataUri, slot, reqStart, sessNum, imageInd
 
     const bodyText = await readBodyText(resp.body);
     const parsed = JSON.parse(bodyText);
-    const description = parsed?.choices?.[0]?.message?.content || '';
+    const rawContent = parsed?.choices?.[0]?.message?.content;
+    // OpenAI/UMANS may return content as an array of parts; extract the text.
+    const description = typeof rawContent === 'string'
+      ? rawContent
+      : (Array.isArray(rawContent) ? rawContent.map(p => p?.text || '').join('') : '');
 
     if (!description) {
       return '[Image analysis failed: no text in handoff response]';
@@ -1755,20 +1355,26 @@ async function startSleevSignIn(binPath) {
   // callback completes. We spawn it and watch for completion.
   return new Promise((resolve) => {
     let stdout = '';
+    let settled = false;
     const useShell = binPath.endsWith('.cmd') || binPath.endsWith('.bat');
     const child = spawn(binPath, ['auth', 'login'], { stdio: ['ignore', 'pipe', 'pipe'], shell: useShell });
     sleevState.signInProcess = child;
+    const done = (val) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      sleevState.signInProcess = null;
+      resolve(val);
+    };
     child.stdout.on('data', (d) => { stdout += d.toString(); });
     child.on('close', (code) => {
-      sleevState.signInProcess = null;
-      resolve(code === 0 || /success|logged in|authenticated/i.test(stdout));
+      done(code === 0 || /success|logged in|authenticated/i.test(stdout));
     });
-    child.on('error', () => { sleevState.signInProcess = null; resolve(false); });
+    child.on('error', () => { done(false); });
     // Safety timeout: don't block the proxy forever if the user walks away.
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       try { child.kill(); } catch {}
-      sleevState.signInProcess = null;
-      resolve(false);
+      done(false);
     }, 180000);
   });
 }
@@ -1926,16 +1532,6 @@ class UpstreamClient {
     };
   }
 
-  anthropicHeaders(stream = false) {
-    return {
-      'x-api-key': this.apiKey,
-      'anthropic-version': '2023-06-01',
-      'Content-Type': 'application/json',
-      'Accept': stream ? 'text/event-stream' : 'application/json',
-      'Connection': 'keep-alive',
-    };
-  }
-
   async getUserInfo() {
     const requestURL = `${this.baseURL}/models/info`;
     const resp = await fetch(requestURL, {
@@ -1997,19 +1593,26 @@ async function getCatalogData() {
   if (modelCatalogCache && Date.now() - modelCatalogCacheTime < MODEL_CATALOG_CACHE_TTL) {
     return modelCatalogCache;
   }
-  const data = await fetchModelCatalog();
-  modelCatalogCache = data;
-  modelCatalogCacheTime = Date.now();
-  if (data && typeof data === 'object' && !Array.isArray(data.data)) {
-    modelDisplayNameMap = {};
-    modelInfoMap = {};
-    for (const [id, info] of Object.entries(data)) {
-      if (!info || typeof info !== 'object') continue;
-      modelInfoMap[id] = info;
-      if (info.display_name) modelDisplayNameMap[id] = info.display_name.replace(/^Umans\s+/i, '');
-    }
+  // Dedup concurrent fetches so only one network request is made.
+  if (!modelCatalogFetchPromise) {
+    modelCatalogFetchPromise = (async () => {
+      try {
+        const data = await fetchModelCatalog();
+        modelCatalogCache = data;
+        modelCatalogCacheTime = Date.now();
+        applyCatalogData(data);
+        return data;
+      } catch (e) {
+        // On failure, fall back to stale cache if available so callers
+        // don't break when the upstream is temporarily unreachable.
+        if (modelCatalogCache) return modelCatalogCache;
+        throw e;
+      } finally {
+        modelCatalogFetchPromise = null;
+      }
+    })();
   }
-  return data;
+  return modelCatalogFetchPromise;
 }
 
 async function fetchModelsDevCatalog() {
@@ -2309,7 +1912,8 @@ function readBodyText(body) {
 
 function pipeBodyToResponse(body, res) {
   let closed = false;
-  const onClose = () => { closed = true; };
+  let cleanup = null;
+  const onClose = () => { closed = true; if (cleanup) cleanup(); };
   res.on('close', onClose);
 
   function safeWrite(chunk) {
@@ -2326,6 +1930,7 @@ function pipeBodyToResponse(body, res) {
 
   if (isNodeStream(body)) {
     return new Promise((resolve) => {
+      cleanup = () => { try { body.destroy(); } catch {} };
       body.on('data', chunk => safeWrite(chunk));
       body.on('end', () => { safeEnd(); resolve(); });
       body.on('error', () => { safeEnd(); resolve(); });
@@ -2333,6 +1938,7 @@ function pipeBodyToResponse(body, res) {
   }
   return new Promise((resolve) => {
     const reader = body.getReader();
+    cleanup = () => { try { reader.cancel(); } catch {} };
     function pump() {
       if (closed) { resolve(); return; }
       reader.read().then(({ done, value }) => {
@@ -2397,7 +2003,15 @@ function waitFreegenWs(jobId, timeoutMs = 120000) {
       return;
     }
     ws.onopen = () => {
-      try { ws.send(JSON.stringify({ type: 'subscribe', job_id: jobId, auth: Date.now().toString() })); } catch (e) { clearTimeout(timer); reject(e); }
+      try {
+        ws.send(JSON.stringify({ type: 'subscribe', job_id: jobId, auth: Date.now().toString() }));
+      } catch (e) {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        try { ws.close(); } catch {}
+        reject(e);
+      }
     };
     ws.onmessage = (event) => {
       let msg;
@@ -2459,7 +2073,6 @@ async function generateFreegenWallpaperToDisk({ prompt, ratio = '16:9', forceApp
     return _freegenGenPromise;
   }
   _freegenGenRunning = true;
-  freegenLastError = null;
   _freegenGenPromise = (async () => {
     try {
       const { current, pending } = freegenWallpaperPaths();
@@ -2476,7 +2089,6 @@ async function generateFreegenWallpaperToDisk({ prompt, ratio = '16:9', forceApp
       }
       return current;
     } catch (e) {
-      freegenLastError = e.message;
       console.error('[FreeGen] generation failed:', e.message);
       throw e;
     } finally {
@@ -2508,23 +2120,34 @@ function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let received = 0;
+    let settled = false;
     req.on('data', chunk => {
       received += chunk.length;
       if (received > MAX_BODY_SIZE) {
         req.pause();
-        reject(new Error('request body too large'));
+        if (!settled) { settled = true; reject(new Error('request body too large')); }
         return;
       }
       chunks.push(chunk);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    req.on('error', reject);
+    req.on('end', () => { if (!settled) { settled = true; resolve(Buffer.concat(chunks).toString('utf8')); } });
+    req.on('error', (e) => { if (!settled) { settled = true; reject(e); } });
+    req.on('aborted', () => { if (!settled) { settled = true; reject(new Error('request aborted')); } });
   });
 }
 
 function writeJSON(res, statusCode, payload) {
-  try { res.writeHead(statusCode, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(payload)); }
-  catch (e) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end('{"error":{"message":"encode failed","type":"server_error"}}'); }
+  let jsonStr;
+  try { jsonStr = JSON.stringify(payload); }
+  catch (e) {
+    if (!res.headersSent) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end('{"error":{"message":"encode failed","type":"server_error"}}');
+    }
+    return;
+  }
+  try { res.writeHead(statusCode, { 'Content-Type': 'application/json' }); res.end(jsonStr); }
+  catch (e) { /* headers already sent or connection closed — nothing to do */ }
 }
 
 function writeOpenAIError(res, statusCode, message, errorType, code) {
@@ -2560,22 +2183,80 @@ async function handleHealthz(req, res) {
   });
 }
 
+let upstreamModelsCache = { data: null, time: 0, ttl: 5 * 60 * 1000 };
+
+async function fetchUpstreamModels() {
+  if (upstreamModelsCache.data && Date.now() - upstreamModelsCache.time < upstreamModelsCache.ttl) {
+    return upstreamModelsCache.data;
+  }
+  try {
+    const apiKey = config?.apiKey || '';
+    const baseURL = config?.upstreamBaseURL || UMANS_API_BASE;
+    const resp = await fetch(`${baseURL}/models`, {
+      headers: apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {},
+      signal: AbortSignal.timeout(10000),
+      agent: UPSTREAM_AGENT,
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    upstreamModelsCache = { data, time: Date.now(), ttl: 5 * 60 * 1000 };
+    return data;
+  } catch (e) {
+    return upstreamModelsCache.data;
+  }
+}
+
 async function handleModels(req, res) {
   if (req.method !== 'GET') { writeOpenAIError(res, 405, 'method not allowed', 'invalid_request_error', ''); return; }
-  await getCatalogData(); // ensure model catalog is loaded
+  try { await getCatalogData(); } catch (e) { /* fall back to whatever is cached */ }
+  const upstreamModels = await fetchUpstreamModels();
+  const upstreamPricing = {};
+  if (upstreamModels?.data) {
+    for (const m of upstreamModels.data) {
+      if (m.id && m.pricing) upstreamPricing[m.id] = m.pricing;
+    }
+  }
   const models = getEffectiveModels();
   const created = Math.floor(startTime.getTime() / 1000);
   writeJSON(res, 200, {
     object: 'list',
-    data: models.map(m => ({
-      id: m,
-      object: 'model',
-      created,
-      owned_by: 'umans',
-      root: m,
-      permission: [],
-      display_name: modelDisplayNameMap[m] || m.replace(/^umans-/i, ''),
-    }))
+    data: models.map(m => {
+      const info = modelInfoMap[m] || {};
+      const caps = info.capabilities || {};
+      const entry = {
+        id: m,
+        object: 'model',
+        created,
+        owned_by: 'umans',
+        root: m,
+        permission: [],
+        display_name: modelDisplayNameMap[m] || m.replace(/^umans-/i, ''),
+      };
+      if (typeof caps.context_window === 'number' && caps.context_window > 0) {
+        let outputLimit = caps.context_window;
+        if (typeof caps.recommended_max_tokens === 'number' && caps.recommended_max_tokens > 0) {
+          outputLimit = caps.recommended_max_tokens;
+        } else if (typeof caps.max_completion_tokens === 'number' && caps.max_completion_tokens > 0) {
+          outputLimit = caps.max_completion_tokens;
+        }
+        entry.context_length = caps.context_window;
+        entry.limit = {
+          context: caps.context_window,
+          output: outputLimit,
+        };
+      }
+      if (upstreamPricing[m]) {
+        const p = upstreamPricing[m];
+        entry.pricing = {
+          prompt: typeof p.input === 'number' ? p.input / 1_000_000 : undefined,
+          completion: typeof p.output === 'number' ? p.output / 1_000_000 : undefined,
+        };
+        // Strip undefined keys so they don't appear in the response
+        if (entry.pricing.prompt === undefined) delete entry.pricing.prompt;
+        if (entry.pricing.completion === undefined) delete entry.pricing.completion;
+      }
+      return entry;
+    })
   });
 }
 
@@ -2585,7 +2266,7 @@ function processQueue() {
   if (limit === null) return;
   while (requestQueue.length > 0 && activeRequests < limit) {
     const item = requestQueue.shift();
-    if (item.res.writableEnded) continue;
+    if (item.res.writableEnded || item.res.destroyed) continue;
     activeRequests++;
     if (item.format === 'anthropic') {
       proxyAnthropicRequest(item.res, item.payload, item.model, item.writeError, item.writePassthroughError, item.req)
@@ -2608,6 +2289,7 @@ async function handleChatCompletions(req, res) {
 
   const limit = getEffectiveConcurrency().limit;
   if (limit !== null && activeRequests >= limit) {
+    if (requestQueue.length >= MAX_QUEUE_SIZE) { writeOpenAIError(res, 503, 'concurrency queue full', 'server_error', 'queue_full'); return; }
     requestQueue.push({ res, payload, model: requestedModel, writeError: writeOpenAIError, writePassthroughError, req });
     return;
   }
@@ -2657,6 +2339,7 @@ async function proxyAnthropicRequest(res, payload, requestedModel, writeError, w
   }
 
   const resolvedAnthropicModel = resolveModelId(requestedModel);
+  payload.model = resolvedAnthropicModel;
   await performVisionHandoff(payload, resolvedAnthropicModel, slot, sessNum, reqStart);
 
   try {
@@ -2674,7 +2357,7 @@ async function proxyAnthropicRequest(res, payload, requestedModel, writeError, w
         session: { sessNum, slotName: slot.name },
         request: { method: 'POST', url: `http://localhost${req?.url || '/v1/messages'}`, headers: redactHeaders(req?.headers || {}), body: redactBodyJson(JSON.stringify(payload).substring(0, 2000)) },
         upstream: { url: `${upstream.baseURL}/messages`, method: 'POST', status: upstreamStatus, body: (errText || '').substring(0, 500) },
-      });
+      }).catch(e => console.error('failed to write errors.log:', e.message));
       writePassthroughError(res, upstreamStatus, errText);
       // The Anthropic pass-through has no retry loop, so marking the key
       // unhealthy on a 500/502/503 only poisons the key for subsequent
@@ -2693,11 +2376,13 @@ async function proxyAnthropicRequest(res, payload, requestedModel, writeError, w
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
     };
+    keyPool.markHealthy(slot.index);
     res.writeHead(upstreamStatus, respHeaders);
-    pipeBodyToResponse(upstreamBody, res);
+    await pipeBodyToResponse(upstreamBody, res);
   } catch (e) {
     console.log(`${reqStart} [Session#${sessNum}>${slot.name}]-[anthropic:${requestedModel}]-ERROR ${(e.message||'').substring(0,200)}`);
-    writePassthroughError(res, 502, e.message || 'upstream fetch failed');
+    if (!res.headersSent) writePassthroughError(res, 502, e.message || 'upstream fetch failed');
+    else { try { res.end(); } catch {} }
     keyPool.markUnhealthy(slot.index, 502);
   }
 }
@@ -2710,7 +2395,6 @@ async function handleAnthropicMessages(req, res) {
   try { anthropicPayload = JSON.parse(requestBody); } catch (e) { writeAnthropicError(res, 400, 'request body must be valid JSON', 'invalid_request_error'); return; }
   const requestedModel = (anthropicPayload.model || '').trim();
   if (!requestedModel) { writeAnthropicError(res, 400, 'model is required', 'invalid_request_error'); return; }
-  const isStream = anthropicPayload.stream === true;
 
   // Anthropic payloads are passed through mostly untouched, but apply the same
   // image-count cap the OpenAI path uses so UMANS never sees > MAX_IMAGES images.
@@ -2718,6 +2402,7 @@ async function handleAnthropicMessages(req, res) {
 
   const limit = getEffectiveConcurrency().limit;
   if (limit !== null && activeRequests >= limit) {
+    if (requestQueue.length >= MAX_QUEUE_SIZE) { writeAnthropicError(res, 503, 'concurrency queue full', 'overloaded_error'); return; }
     requestQueue.push({ res, payload: anthropicPayload, model: requestedModel, writeError: writeAnthropicError, writePassthroughError: writeAnthropicPassthroughError, req, format: 'anthropic' });
     return;
   }
@@ -2800,8 +2485,7 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
   }
 
   const modelInfo = modelInfoMap[resolvedModel] || {};
-  const isHandoffModel = needsVisionHandoff(resolvedModel);
-  limitImagesInMessages(payload, 1);
+  limitImagesInMessages(payload, config.maxImages);
 
   const reasoningCaps = modelInfo.capabilities?.reasoning;
   if (reasoningCaps?.supported === true && reasoningCaps.can_disable === false) {
@@ -2813,6 +2497,11 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
   await enforceRateLimit(requestedModel);
 
   await retryLoop(async ({ attempt, isLast }) => {
+    // On retry after a key was marked unhealthy, try to rotate to a fresh key.
+    if (attempt > 1 && keyPool.total > 1) {
+      const fresh = await keyPool.acquire();
+      if (fresh) slot = fresh;
+    }
     let resp;
     try {
       resp = await upstream.chatCompletions(payload);
@@ -2830,6 +2519,7 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
     const contentType = resp.headers['content-type'] || '';
 
     if (resp.status >= 200 && resp.status < 300) {
+      keyPool.markHealthy(slot.index);
       try {
         if (contentType.includes('text/event-stream')) {
           // Buffer the SSE stream so we can sanitize any shell tool_calls before
@@ -2840,9 +2530,16 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
           const collectData = (chunk) => { rawSse += Buffer.from(chunk).toString('utf8'); };
           if (resp.body && typeof resp.body.pipe === 'function') {
             await new Promise((resolve) => {
+              const onEnd = () => { cleanup(); resolve(); };
+              const onError = () => { cleanup(); try { resp.body.destroy(); } catch {} resolve(); };
+              const cleanup = () => {
+                resp.body.removeListener('data', collectData);
+                resp.body.removeListener('end', onEnd);
+                resp.body.removeListener('error', onError);
+              };
               resp.body.on('data', collectData);
-              resp.body.on('end', resolve);
-              resp.body.on('error', resolve);
+              resp.body.on('end', onEnd);
+              resp.body.on('error', onError);
             });
           } else if (resp.body && typeof resp.body.getReader === 'function') {
             const reader = resp.body.getReader();
@@ -2852,7 +2549,7 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
                 if (done) break;
                 collectData(value);
               }
-            } catch { /* fall through */ }
+            } catch { try { reader.cancel(); } catch {} }
           }
           const sanitizedSse = sanitizeSseResponse(rawSse);
           res.writeHead(resp.status, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
@@ -2926,7 +2623,7 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
   });
 }
 function writePassthroughError(res, statusCode, body) {
-  const trimmed = body.trim();
+  const trimmed = (body || '').trim();
   try { const payload = JSON.parse(trimmed); writeOpenAIError(res, statusCode, payload.error?.message || payload.message || trimmed, payload.error?.type || 'upstream_error', payload.error?.code || ''); }
   catch (e) { writeOpenAIError(res, statusCode, trimmed, 'upstream_error', ''); }
 }
@@ -2936,15 +2633,7 @@ async function validateApiKey() {
   try {
     const data = await upstream.getUserInfo();
     userInfoCache = { data, time: Date.now(), ttl: 60000 };
-    if (data && typeof data === 'object' && !Array.isArray(data.data)) {
-      modelDisplayNameMap = {};
-      modelInfoMap = {};
-      for (const [id, info] of Object.entries(data)) {
-        if (!info || typeof info !== 'object') continue;
-        modelInfoMap[id] = info;
-        if (info.display_name) modelDisplayNameMap[id] = info.display_name.replace(/^Umans\s+/i, '');
-      }
-    }
+    applyCatalogData(data);
     console.log(`API key valid, ${Object.keys(modelDisplayNameMap).length} models loaded`);
     return true;
   } catch (e) {
@@ -2969,30 +2658,17 @@ async function handleRequest(req, res) {
 
     // Embed current wallpaper to prevent white flash while dashboard loads
     let bgStyle = '<style>body{background:#0d1117}</style>';
-    if (config.wallpaperSource === 'bing') {
-      const file = path.join(__dirname, '.cache', 'wallpaper.jpg');
-      if (fs.existsSync(file)) {
-        try {
-          const buf = fs.readFileSync(file);
-          bgStyle = '<style>html,body{min-height:100vh;background:#0d1117 url(data:image/jpeg;base64,' + buf.toString('base64') + ') no-repeat center center fixed;background-size:cover}</style>';
-        } catch {}
-      }
-    } else if (config.wallpaperSource === 'wallhaven') {
-      const file = path.join(__dirname, '.cache', 'wallpaper-haven.jpg');
-      if (fs.existsSync(file)) {
-        try {
-          const buf = fs.readFileSync(file);
-          bgStyle = '<style>html,body{min-height:100vh;background:#0d1117 url(data:image/jpeg;base64,' + buf.toString('base64') + ') no-repeat center center fixed;background-size:cover}</style>';
-        } catch {}
-      }
-    } else if (config.wallpaperSource === 'freegen') {
-      const file = path.join(__dirname, '.cache', 'wallpaper-freegen.jpg');
-      if (fs.existsSync(file)) {
-        try {
-          const buf = fs.readFileSync(file);
-          bgStyle = '<style>html,body{min-height:100vh;background:#0d1117 url(data:image/jpeg;base64,' + buf.toString('base64') + ') no-repeat center center fixed;background-size:cover}</style>';
-        } catch {}
-      }
+    const wallpaperFiles = {
+      bing: path.join(__dirname, '.cache', 'wallpaper.jpg'),
+      wallhaven: path.join(__dirname, '.cache', 'wallpaper-haven.jpg'),
+      freegen: path.join(__dirname, '.cache', 'wallpaper-freegen.jpg'),
+    };
+    const wallpaperFile = wallpaperFiles[config.wallpaperSource];
+    if (wallpaperFile && fs.existsSync(wallpaperFile)) {
+      try {
+        const wpBuf = fs.readFileSync(wallpaperFile);
+        bgStyle = '<style>html,body{min-height:100vh;background:#0d1117 url(data:image/jpeg;base64,' + wpBuf.toString('base64') + ') no-repeat center center fixed;background-size:cover}</style>';
+      } catch {}
     }
     dashboardHtml = dashboardHtml.replace(/<\/head>/i, bgStyle + '</head>');
 
@@ -3043,8 +2719,6 @@ async function handleRequest(req, res) {
   // enabledModels is obsolete: the model list now comes from UMANS catalog.
   if (Array.isArray(newConfig.enabledModels)) config.enabledModels = newConfig.enabledModels;
   if (newConfig.modelDisplayNames && typeof newConfig.modelDisplayNames === 'object') config.modelDisplayNames = newConfig.modelDisplayNames;
-        if (newConfig.email !== undefined) config.email = newConfig.email;
-        if (newConfig.password !== undefined) config.password = newConfig.password;
         if (newConfig.wallpaperSource !== undefined) config.wallpaperSource = newConfig.wallpaperSource;
         if (typeof newConfig.freegenPrompt === 'string') config.freegenPrompt = newConfig.freegenPrompt;
         if (newConfig.overrideConcurrency !== undefined) config.overrideConcurrency = Math.max(0, newConfig.overrideConcurrency);
@@ -3074,7 +2748,7 @@ async function handleRequest(req, res) {
   }
 
   if (pathname === '/api/models' && req.method === 'GET') {
-    await getCatalogData();
+    try { await getCatalogData(); } catch (e) { /* fall back to whatever is cached */ }
     writeJSON(res, 200, { models: getAllCatalogModels(), disabled_models: config.disabledModels || [], model_display_names: modelDisplayNameMap });
     return;
   }
@@ -3094,7 +2768,8 @@ async function handleRequest(req, res) {
     }
     try {
       const response = await fetch('https://peapix.com/bing/feed', {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+        signal: AbortSignal.timeout(15000),
       });
       const text = await response.text();
       const data = JSON.parse(text);
@@ -3104,16 +2779,19 @@ async function handleRequest(req, res) {
       const imgResp = await new Promise((resolve, reject) => {
         const u = new URL(imgUrl);
         const mod = u.protocol === 'https:' ? require('https') : require('http');
-        mod.get(imgUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' } }, resolve).on('error', reject);
+        const req = mod.get(imgUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' } }, resolve);
+        req.on('error', reject);
+        req.setTimeout(30000, () => { req.destroy(new Error('image download timeout')); });
       });
-      const chunks = [];
-      imgResp.on('data', c => chunks.push(c));
-      imgResp.on('end', () => {
-        const buf = Buffer.concat(chunks);
-        fs.writeFileSync(imgCacheFile, buf);
-        res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': buf.length, ...expireHeader });
-        res.end(buf);
+      const buf = await new Promise((resolve, reject) => {
+        const chunks = [];
+        imgResp.on('data', c => chunks.push(c));
+        imgResp.on('end', () => resolve(Buffer.concat(chunks)));
+        imgResp.on('error', reject);
       });
+      fs.writeFileSync(imgCacheFile, buf);
+      res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': buf.length, ...expireHeader });
+      res.end(buf);
     } catch (e) {
       if (fs.existsSync(imgCacheFile)) {
         const buf = fs.readFileSync(imgCacheFile);
@@ -3139,7 +2817,7 @@ async function handleRequest(req, res) {
     }
     try {
       const apiUrl = 'https://wallhaven.cc/api/v1/search?categories=100&purity=100&topRange=1M&sorting=toplist&order=desc&page=3';
-      const resp = await fetch(apiUrl, { headers: { 'User-Agent': 'umans-proxy/1.0' } });
+      const resp = await fetch(apiUrl, { headers: { 'User-Agent': 'umans-proxy/1.0' }, signal: AbortSignal.timeout(15000) });
       if (!resp.ok) throw new Error('Wallhaven API returned ' + resp.status);
       const d = await resp.json();
       const data = d?.data;
@@ -3150,16 +2828,19 @@ async function handleRequest(req, res) {
       const imgResp = await new Promise((resolve, reject) => {
         const u = new URL(imgUrl);
         const mod = u.protocol === 'https:' ? require('https') : require('http');
-        mod.get(imgUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' } }, resolve).on('error', reject);
+        const req = mod.get(imgUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' } }, resolve);
+        req.on('error', reject);
+        req.setTimeout(30000, () => { req.destroy(new Error('image download timeout')); });
       });
-      const chunks = [];
-      imgResp.on('data', c => chunks.push(c));
-      imgResp.on('end', () => {
-        const buf = Buffer.concat(chunks);
-        fs.writeFileSync(imgCacheFile, buf);
-        res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': buf.length });
-        res.end(buf);
+      const buf = await new Promise((resolve, reject) => {
+        const chunks = [];
+        imgResp.on('data', c => chunks.push(c));
+        imgResp.on('end', () => resolve(Buffer.concat(chunks)));
+        imgResp.on('error', reject);
       });
+      fs.writeFileSync(imgCacheFile, buf);
+      res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': buf.length });
+      res.end(buf);
     } catch (e) {
       if (fs.existsSync(imgCacheFile)) {
         const buf = fs.readFileSync(imgCacheFile);
@@ -3276,13 +2957,10 @@ async function handleRequest(req, res) {
   if (pathname === '/api/umans/usage' && req.method === 'GET') {
     (async () => {
       try {
-        if (!config.appSession) {
-          await loginToApp();
-        }
         const usageRaw = await fetchUsage();
         const usage = usageRaw?.usage ?? null;
         const win = usageRaw?.window ?? null;
-        writeJSON(res, 200, { usage, window: win, loggedIn: !!config.appSession, email: config.email || '' });
+        writeJSON(res, 200, { usage, window: win, plan: usageRaw?.plan ?? null });
       } catch (e) {
         if (!res.writableEnded) writeJSON(res, 500, { error: e.message });
       }
@@ -3291,17 +2969,7 @@ async function handleRequest(req, res) {
   }
 
   if (pathname === '/api/umans/usage-history' && req.method === 'GET') {
-    (async () => {
-      try {
-        if (!config.appSession) {
-          await loginToApp();
-        }
-        const history = await fetchUsageHistory();
-        writeJSON(res, 200, { history, loggedIn: !!config.appSession });
-      } catch (e) {
-        if (!res.writableEnded) writeJSON(res, 500, { error: e.message });
-      }
-    })();
+    writeJSON(res, 200, { history: { buckets: [] } });
     return;
   }
 
@@ -3318,36 +2986,8 @@ async function handleRequest(req, res) {
     return;
   }
 
-  if (pathname === '/api/umans/login' && req.method === 'POST') {
-    try {
-      const body = await readBody(req);
-      const { email, password } = JSON.parse(body);
-      if (!email || !password) { writeJSON(res, 400, { error: 'Email and password required' }); return; }
-      config.email = email;
-      config.password = password;
-      const success = await loginToApp();
-      if (success) {
-        debouncedSaveConfig(config);
-        writeJSON(res, 200, { success: true, email });
-      } else {
-        writeJSON(res, 401, { error: 'Login failed' });
-      }
-    } catch (e) { writeJSON(res, 400, { error: e.message }); }
-    return;
-  }
-
   if (pathname === '/api/umans/user' && req.method === 'GET') {
-    writeJSON(res, 200, {
-      loggedIn: !!config.appSession,
-      email: config.email || '',
-    });
-    return;
-  }
-
-  if (pathname === '/api/umans/logout' && req.method === 'POST') {
-    config.appSession = '';
-    saveConfig(config);
-    writeJSON(res, 200, { success: true });
+    writeJSON(res, 200, { loggedIn: true, email: '' });
     return;
   }
 
@@ -3393,6 +3033,17 @@ async function handleRequest(req, res) {
 
   if (pathname === '/healthz') { await handleHealthz(req, res); return; }
   if (pathname === '/v1/models') { await handleModels(req, res); return; }
+  if (pathname === '/v1/models/info') {
+    (async () => {
+      try {
+        await getCatalogData();
+        writeJSON(res, 200, modelInfoMap);
+      } catch (e) {
+        if (!res.writableEnded) writeJSON(res, 500, { error: e.message });
+      }
+    })();
+    return;
+  }
   if (pathname === '/v1/chat/completions') { await handleChatCompletions(req, res); return; }
   if (pathname === '/v1/messages' || pathname === '/messages') { await handleAnthropicMessages(req, res); return; }
 
@@ -3430,7 +3081,6 @@ function discoverOpencodeConfigs() {
   }
 
   try {
-    const { execSync } = require('child_process');
     const userProfiles = [];
     const usersDir = 'C:\\Users';
     try {
@@ -3659,12 +3309,6 @@ async function startServer(retryPort = null) {
     console.log(`[Warning] API key validation skipped: ${e.message}`);
   }
 
-  if (config.email && config.password && !config.appSession) {
-    const loggedIn = await loginToApp();
-    if (loggedIn) console.log(`[UMANS] App login successful for ${config.email}`);
-    else console.log(`[UMANS] App login failed or not attempted`);
-  }
-
   const conc = await fetchConcurrency();
   if (conc.concurrent !== null) {
     const eff = getEffectiveConcurrency();
@@ -3719,7 +3363,7 @@ async function startServer(retryPort = null) {
     console.log(`  Enabled Models: ${(config.enabledModels || []).length} (search & add via dashboard)`);
     console.log(`  Response Cache: ${config.cacheEnabled ? 'enabled (' + config.cacheMaxSize + ' entries, ' + (config.cacheTtl / 1000) + 's TTL)' : 'disabled'}`);
     console.log(`  Proxy API Keys: ${config.apiKeys.length > 0 ? config.apiKeys.length + ' (auth enabled)' : 'none (open access)'}`);
-    console.log(`  App Account: ${config.email ? config.email + (config.appSession ? ' (logged in)' : ' (not logged in)') : 'not configured'}`);
+    console.log(`  App Account: API key configured`);
     console.log('');
     setTimeout(() => {
       try {
