@@ -90,7 +90,10 @@
       <div class="card-content px-2">
         <div class="d-flex justify-content-between align-items-center">
           <div><h4 class="mb-0"><i class="bi bi-cloud-lightning me-2"></i><span>UMANS Proxy</span></h4></div>
-          <div><span id="statusIndicator" class="status-indicator status-unknown"></span><span id="statusText" class="fw-medium">Checking...</span></div>
+          <div class="d-flex align-items-center gap-3">
+            <span class="d-flex align-items-center gap-1" style="font-size:0.7rem;color:rgba(255,255,255,0.55)"><i class="bi bi-person-badge"></i><code class="masked-userid" id="topUserId" data-userid="" onclick="this.classList.toggle('revealed');this.textContent=this.classList.contains('revealed')?this.dataset.userid:'••••••••••••'" style="font-size:0.7rem;color:rgba(255,255,255,0.85);background:rgba(255,255,255,0.05);padding:1px 4px;border-radius:4px;word-break:break-all;cursor:pointer">••••••••••••</code></span>
+            <span><span id="statusIndicator" class="status-indicator status-unknown"></span><span id="statusText" class="fw-medium">Checking...</span></span>
+          </div>
         </div>
       </div>
     </div>
@@ -101,7 +104,7 @@
           <div class="glass-panel"></div>
           <div class="card-content">
             <div class="card-header d-flex justify-content-between align-items-center">
-              <span><i class="bi bi-window me-2"></i><span>Window</span></span>
+              <span><i class="bi bi-window me-2"></i><span>5-hour window</span></span>
               <span id="planBadge" class="badge bg-primary" style="font-size:0.7rem;font-weight:600;border:1px solid rgba(102,126,234,0.6);box-shadow:0 0 10px rgba(102,126,234,0.4)"></span>
             </div>
             <div class="card-body">
@@ -110,23 +113,13 @@
                   <div class="card stat-inline-card h-100"><div class="card-content"><div class="stats-value" id="totalRequests">--</div><div class="stats-label">Requests</div></div></div>
                 </div>
                 <div class="col-4">
-                  <div class="card stat-inline-card h-100"><div class="card-content"><div class="stats-value" id="totalTokens">--</div><div class="stats-label" id="totalTokensLabel">Tokens</div></div></div>
+                  <div class="card stat-inline-card h-100"><div class="card-content"><div class="stats-value" id="throttledCount">--</div><div class="stats-label">Throttled</div></div></div>
                 </div>
                 <div class="col-4">
                   <div class="card stat-inline-card h-100"><div class="card-content"><div class="stats-value" id="cachedPct">--</div><div class="stats-label">Cached %</div></div></div>
                 </div>
               </div>
               <div id="usageDetailGrid" class="row g-2" style="font-size:0.75rem"></div>
-              <div id="windowResetBar" class="mt-4" style="display:none">
-                <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.5);margin-bottom:3px">Window Progress</div>
-                <div class="d-flex justify-content-between align-items-center mb-1" style="font-size:0.75rem;color:rgba(255,255,255,0.8)">
-                  <span id="windowStarted"></span>
-                  <span id="windowResets"></span>
-                </div>
-                <div style="height:8px;background:rgba(255,255,255,0.1);border-radius:4px;overflow:hidden">
-                  <div id="windowProgressBar" style="height:100%;background:linear-gradient(90deg,#0d6efd,#6610f2);border-radius:4px;transition:width 1s ease;box-shadow:0 0 8px rgba(102,126,234,0.5)"></div>
-                </div>
-              </div>
             </div>
           </div>
         </div>
@@ -135,18 +128,21 @@
           <div class="glass-panel"></div>
           <div class="card-content">
             <div class="card-header d-flex justify-content-between align-items-center">
-              <span><i class="bi bi-people-fill me-2"></i><span>Concurrency</span></span>
+              <span><i class="bi bi-people-fill me-2"></i><span>Current Concurrency</span></span>
             </div>
             <div class="card-body">
               <div class="row g-2 mb-3">
-                <div class="col-4">
-                  <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:rgba(50,205,50,0.5)"><div class="stats-value" id="concActive">--</div><div class="stats-label">Active</div></div></div>
+                <div class="col-3">
+                  <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:#32CD32"><div class="stats-value" id="concActive">--</div><div class="stats-label">Active</div></div></div>
                 </div>
-                <div class="col-4">
-                  <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:rgba(255,193,7,0.5)"><div class="stats-value" id="concQueued">--</div><div class="stats-label">Queued</div></div></div>
+                <div class="col-3">
+                  <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:#0d6efd"><div class="stats-value" id="concQueued">--</div><div class="stats-label">Queued</div></div></div>
                 </div>
-                <div class="col-4">
-                  <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:rgba(13,110,253,0.5)"><div class="stats-value" id="concLimit">--</div><div class="stats-label">Limit</div></div></div>
+                <div class="col-3">
+                  <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:#fde047"><div class="stats-value" id="concLimit">--</div><div class="stats-label">Limit</div></div></div>
+                </div>
+                <div class="col-3">
+                  <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:#fd7e14"><div class="stats-value" id="concBurst">--</div><div class="stats-label">Burst</div></div></div>
                 </div>
               </div>
               <div class="mt-2">
@@ -155,8 +151,14 @@
                   <span id="concUsageText">0 of 0 sessions</span>
                   <span id="concPctText">0%</span>
                 </div>
-                <div style="height:8px;background:rgba(255,255,255,0.1);border-radius:4px;overflow:hidden">
-                  <div id="concurrencyProgressBar" style="height:100%;width:0%;background:linear-gradient(90deg,#32CD32,#fbbf24);border-radius:4px;transition:width 1s ease;box-shadow:0 0 8px rgba(50,205,50,0.4)"></div>
+                <div style="position:relative;height:10px;background:rgba(255,255,255,0.1);border-radius:4px;overflow:hidden">
+                  <!-- Bottom border: yellow for soft cap zone, orange for burst zone -->
+                  <div id="concBottomSoft" style="position:absolute;bottom:0;left:0;height:2px;width:100%;background:#fde047;z-index:2"></div>
+                  <div id="concBottomBurst" style="position:absolute;bottom:0;left:100%;height:2px;width:0%;background:#fd7e14;z-index:2"></div>
+                  <!-- Solid fill (proxy active) -->
+                  <div id="concurrencyProgressBar" style="height:100%;width:0%;border-radius:4px;transition:width 1s ease;box-shadow:0 0 8px rgba(50,205,50,0.4)"></div>
+                  <!-- Dotted overlay (upstream concurrent) -->
+                  <div id="concurrencyUpstreamBar" style="position:absolute;top:0;left:0;height:100%;width:0%;border-radius:4px;background-image:radial-gradient(circle, rgba(255,255,255,0.7) 1.5px, transparent 1.5px);background-size:5px 5px;z-index:1;pointer-events:none;transition:width 1s ease"></div>
                 </div>
               </div>
               <div id="concurrencyDetailGrid" class="row g-2 mt-3" style="font-size:0.75rem"></div>
@@ -171,60 +173,22 @@
       </div>
 
       <div class="col-lg-4">
-        <div class="card" data-glass data-section="tokens">
+        <div class="card" data-glass data-section="quick-settings">
           <div class="glass-panel"></div>
           <div class="card-content">
-            <div class="card-header collapsible-header d-flex justify-content-between align-items-center" onclick="toggleSection('tokens')">
-              <span><i class="bi bi-chevron-down toggle-icon collapsed me-1"></i><i class="bi bi-key-fill me-2"></i><span>API Key</span></span>
-              <span class="d-flex align-items-stretch gap-2" style="height:100%">
-                <span class="badge bg-secondary d-flex align-items-center" id="tokenCountBadge" onclick="event.stopPropagation()">0</span>
-                <button class="btn btn-sm btn-outline-action rounded-0" onclick="event.stopPropagation();openKeysModal()" style="font-size:11px"><i class="bi bi-pencil me-1"></i><span>Manage</span></button>
-              </span>
+            <div class="card-header collapsible-header" onclick="toggleSection('quick-settings')">
+              <i class="bi bi-chevron-down toggle-icon me-1"></i><i class="bi bi-gear-fill me-2"></i><span>Quick Settings</span>
             </div>
-            <div class="card-body collapse-section collapsed" id="section-tokens"><div id="tokenPoolsContainer"></div></div>
-          </div>
-        </div>
-
-        <div class="card" data-glass data-section="models">
-          <div class="glass-panel"></div>
-          <div class="card-content">
-            <div class="card-header collapsible-header d-flex justify-content-between align-items-center" onclick="toggleSection('models')">
-              <span><i class="bi bi-chevron-down toggle-icon me-1"></i><i class="bi bi-cpu-fill me-2"></i><span>Models</span></span>
-              <span class="badge bg-secondary" id="modelCountBadge">0</span>
-            </div>
-            <div class="card-body collapse-section" id="section-models">
-              <p class="text-muted mb-2" style="font-size:10px;line-height:1.45;word-break:break-word;overflow-wrap:break-word">Models are configured in <code style="word-break:break-all;color:#6ea8fe">.config/config.json</code> under <code style="word-break:break-all;color:#6ea8fe">ENABLED_MODELS</code>.</p>
-              <div id="modelsContainer"></div>
-            </div>
-          </div>
-        </div>
-
-        <div class="card" data-glass data-section="actions">
-          <div class="glass-panel"></div>
-          <div class="card-content">
-            <div class="card-header collapsible-header" onclick="toggleSection('actions')">
-              <i class="bi bi-chevron-down toggle-icon me-1"></i><i class="bi bi-lightning-charge-fill me-2"></i><span>Quick Actions</span>
-            </div>
-            <div class="card-body collapse-section" id="section-actions">
-              <div class="d-grid gap-2">
-                <button class="btn btn-outline-action" onclick="checkHealth()">Check Health</button>
-                <button class="btn btn-outline-action" onclick="testConnection()">Test Connection</button>
-                <button class="btn btn-outline-action" onclick="fetchUsage()">Refresh Usage</button>
-                <button class="btn btn-outline-action" id="restartBtn" onclick="restartProxy()">Restart Proxy</button>
+            <div class="card-body collapse-section" id="section-quick-settings">
+              <div class="mb-2">
+                <label class="form-label" style="font-size:0.7rem;color:rgba(255,255,255,0.5);margin-bottom:2px">Automatic Refresh</label>
+                <div class="btn-group w-100" role="group" id="refreshIntervalGroup">
+                  <button class="btn btn-outline-action btn-refresh" data-refresh="30" onclick="setRefreshInterval('30')">30s</button>
+                  <button class="btn btn-outline-action btn-refresh" data-refresh="60" onclick="setRefreshInterval('60')">1m</button>
+                  <button class="btn btn-outline-action btn-refresh" data-refresh="120" onclick="setRefreshInterval('120')">2m</button>
+                  <button class="btn btn-outline-action btn-refresh" data-refresh="298" onclick="setRefreshInterval('298')">5m</button>
+                </div>
               </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="card" data-glass data-section="env">
-          <div class="glass-panel"></div>
-          <div class="card-content">
-            <div class="card-header collapsible-header" onclick="toggleSection('env')">
-              <i class="bi bi-chevron-down toggle-icon me-1"></i><i class="bi bi-info-circle-fill me-2"></i><span>Environment</span>
-            </div>
-            <div class="card-body env-body collapse-section" id="section-env">
-              <div class="row"><div class="col-6 mb-2"><small class="text-muted">Runtime</small><div class="fw-medium" id="runtimeInfo">-</div></div><div class="col-6 mb-2"><small class="text-muted">Port</small><div class="fw-medium" id="portInfo">-</div></div></div>
-              <div class="row"><div class="col-6 mb-2"><small class="text-muted">Started At</small><div class="fw-medium" id="startedAt">-</div></div></div>
               <div class="mb-2">
                 <label class="form-label" style="font-size:0.7rem;color:rgba(255,255,255,0.5);margin-bottom:2px">Wallpaper</label>
                 <div class="btn-group w-100" role="group" id="wallpaperGroup">
@@ -244,15 +208,74 @@
                  <div id="freegenStatus" style="font-size:0.65rem;color:rgba(255,255,255,0.55);min-height:1rem"></div>
               </div>
               <div class="mb-2">
-                <div class="d-flex align-items-center justify-content-between">
-                  <small class="text-muted">Sleev (compress)</small>
-                  <div class="form-check form-switch" style="margin:0;min-height:0;padding:0;display:flex;align-items:center">
-                    <input class="form-check-input" type="checkbox" id="sleevToggle" onchange="toggleSleev(this.checked)" style="margin:0">
-                    <label class="form-check-label text-muted" for="sleevToggle" id="sleevStatusLabel" style="cursor:pointer;font-size:0.6rem;margin:0;padding-left:0.35rem">Off</label>
-                  </div>
+                <label class="form-label d-flex align-items-center gap-1" style="font-size:0.7rem;color:rgba(255,255,255,0.5);margin-bottom:2px">
+                  Context Compression
+                  <i class="bi bi-info-circle" style="cursor:help;color:rgba(255,255,255,0.4)" data-bs-toggle="tooltip" data-bs-html="true" title="Routes requests through Sleev, which compresses conversation context before forwarding to UMANS. Reduces token usage but adds latency. Requires the Sleev binary installed and a Sleev account."></i>
+                </label>
+                <div class="btn-group w-100" role="group" id="sleevGroup">
+                  <button class="btn btn-outline-action btn-sleev" data-sleev="off" onclick="toggleSleev(false)">Off</button>
+                  <button class="btn btn-outline-action btn-sleev" data-sleev="on" onclick="toggleSleev(true)">On</button>
                 </div>
                 <div id="sleevStatus" style="font-size:0.6rem;color:rgba(255,255,255,0.5);min-height:0.8rem;margin-top:2px"></div>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" data-glass data-section="actions">
+          <div class="glass-panel"></div>
+          <div class="card-content">
+            <div class="card-header collapsible-header" onclick="toggleSection('actions')">
+              <i class="bi bi-chevron-down toggle-icon collapsed me-1"></i><i class="bi bi-lightning-charge-fill me-2"></i><span>Quick Actions</span>
+            </div>
+            <div class="card-body collapse-section collapsed" id="section-actions">
+              <div class="d-grid gap-2">
+                <button class="btn btn-outline-action" onclick="checkHealth()">Check Health</button>
+                <button class="btn btn-outline-action" onclick="testConnection()">Test Connection</button>
+                <button class="btn btn-outline-action" onclick="fetchUsage();fetchConcurrency()">Manual Refresh</button>
+                <button class="btn btn-outline-action" id="restartBtn" onclick="restartProxy()">Restart Proxy</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" data-glass data-section="tokens">
+          <div class="glass-panel"></div>
+          <div class="card-content">
+            <div class="card-header collapsible-header d-flex justify-content-between align-items-center" onclick="toggleSection('tokens')">
+              <span><i class="bi bi-chevron-down toggle-icon collapsed me-1"></i><i class="bi bi-key-fill me-2"></i><span>API Key</span></span>
+              <span class="d-flex align-items-stretch gap-2" style="height:100%">
+                <span class="badge bg-secondary d-flex align-items-center" id="tokenCountBadge" onclick="event.stopPropagation()">0</span>
+                <button class="btn btn-sm btn-outline-action rounded-0" onclick="event.stopPropagation();openKeysModal()" style="font-size:11px"><i class="bi bi-pencil me-1"></i><span>Manage</span></button>
+              </span>
+            </div>
+            <div class="card-body collapse-section collapsed" id="section-tokens"><div id="tokenPoolsContainer"></div></div>
+          </div>
+        </div>
+
+        <div class="card" data-glass data-section="models">
+          <div class="glass-panel"></div>
+          <div class="card-content">
+            <div class="card-header collapsible-header d-flex justify-content-between align-items-center" onclick="toggleSection('models')">
+              <span><i class="bi bi-chevron-down toggle-icon collapsed me-1"></i><i class="bi bi-cpu-fill me-2"></i><span>Models</span></span>
+              <span class="badge bg-secondary" id="modelCountBadge">0</span>
+            </div>
+            <div class="card-body collapse-section collapsed" id="section-models">
+              <p class="text-muted mb-2" style="font-size:10px;line-height:1.45;word-break:break-word;overflow-wrap:break-word">Models are configured in <code style="word-break:break-all;color:#6ea8fe">.config/config.json</code> under <code style="word-break:break-all;color:#6ea8fe">ENABLED_MODELS</code>.</p>
+              <div id="modelsContainer"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" data-glass data-section="env">
+          <div class="glass-panel"></div>
+          <div class="card-content">
+            <div class="card-header collapsible-header" onclick="toggleSection('env')">
+              <i class="bi bi-chevron-down toggle-icon collapsed me-1"></i><i class="bi bi-info-circle-fill me-2"></i><span>Environment</span>
+            </div>
+            <div class="card-body env-body collapse-section collapsed" id="section-env">
+              <div class="row"><div class="col-6 mb-2"><small class="text-muted">Runtime</small><div class="fw-medium" id="runtimeInfo">-</div></div><div class="col-6 mb-2"><small class="text-muted">Port</small><div class="fw-medium" id="portInfo">-</div></div></div>
+              <div class="row"><div class="col-6 mb-2"><small class="text-muted">Started At</small><div class="fw-medium" id="startedAt">-</div></div></div>
             </div>
           </div>
         </div>
@@ -420,11 +443,14 @@
         btn.disabled = false; btn.textContent = 'Generate';
       }
     }
+    function setSleevActive(enabled) {
+      document.querySelectorAll('.btn-sleev').forEach(btn => {
+        btn.classList.toggle('active', (enabled && btn.dataset.sleev === 'on') || (!enabled && btn.dataset.sleev === 'off'));
+      });
+    }
     async function toggleSleev(enabled) {
-      const label = document.getElementById('sleevStatusLabel');
       const status = document.getElementById('sleevStatus');
-      const toggle = document.getElementById('sleevToggle');
-      if (label) label.textContent = enabled ? 'On' : 'Off';
+      setSleevActive(enabled);
       if (status) status.textContent = enabled ? 'Starting...' : 'Stopping...';
       try {
         const r = await fetch('/api/sleev', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) });
@@ -437,8 +463,7 @@
         }
       } catch (e) {
         if (status) status.textContent = 'Error: ' + e.message;
-        if (toggle) toggle.checked = !enabled;
-        if (label) label.textContent = !enabled ? 'On' : 'Off';
+        setSleevActive(!enabled);
       }
     }
 
@@ -455,11 +480,8 @@
       try {
         const r = await fetch('/api/sleev');
         const d = await r.json();
-        const toggle = document.getElementById('sleevToggle');
-        const label = document.getElementById('sleevStatusLabel');
         const status = document.getElementById('sleevStatus');
-        if (toggle) toggle.checked = !!d.enabled;
-        if (label) label.textContent = d.enabled ? 'On' : 'Off';
+        setSleevActive(!!d.enabled);
         if (d.ready) {
           if (status) status.innerHTML = '<span style="color:#4ade80">Active</span> (compressing context)';
           sleevPollTimer = null;
@@ -538,47 +560,60 @@
 
     async function fetchConcurrency() {
       try {
-        const r = await fetch('/api/umans/concurrency');
+        const r = await fetch('/api/umans/concurrency?fresh=1');
         const d = await r.json();
         const concurrent = d.concurrent != null ? d.concurrent : 0;
         const limit = d.limit != null ? d.limit : 0;
+        const hardCap = d.hard_cap != null ? d.hard_cap : null;
         const active = d.active != null ? d.active : concurrent;
         const queued = d.queued != null ? d.queued : 0;
         document.getElementById('concActive').textContent = active.toString();
         document.getElementById('concQueued').textContent = queued.toString();
         document.getElementById('concLimit').textContent = limit.toString();
-        const pct = limit > 0 ? Math.min(100, (concurrent / limit) * 100) : 0;
-        document.getElementById('concurrencyProgressBar').style.width = pct + '%';
-        document.getElementById('concUsageText').textContent = concurrent + ' of ' + limit + ' ' + 'sessions';
-        document.getElementById('concPctText').textContent = pct.toFixed(0) + '%';
-        // Color shift: green -> yellow -> red based on usage
+        document.getElementById('concBurst').textContent = hardCap != null ? hardCap.toString() : '--';
+        // Progress bar scales to hard_cap (burst)
+        const barMax = hardCap != null ? hardCap : limit;
+        // Solid fill = proxy's active count, dotted overlay = upstream's concurrent count
+        const activePct = barMax > 0 ? Math.min(100, (active / barMax) * 100) : 0;
+        const upstreamPct = barMax > 0 ? Math.min(100, (concurrent / barMax) * 100) : 0;
+        // Bottom borders: yellow for soft cap zone, orange for burst zone
+        const softPct = (hardCap != null && limit > 0 && hardCap > limit) ? (limit / hardCap) * 100 : 100;
+        document.getElementById('concBottomSoft').style.width = softPct + '%';
+        document.getElementById('concBottomBurst').style.left = softPct + '%';
+        document.getElementById('concBottomBurst').style.width = (100 - softPct) + '%';
+        // Solid fill (proxy active): green in soft cap region, orange in burst region
         const bar = document.getElementById('concurrencyProgressBar');
-        if (pct >= 90) {
-          bar.style.background = 'linear-gradient(90deg,#fbbf24,#dc3545)';
-          bar.style.boxShadow = '0 0 8px rgba(220,53,69,0.4)';
-        } else if (pct >= 70) {
-          bar.style.background = 'linear-gradient(90deg,#32CD32,#fbbf24)';
-          bar.style.boxShadow = '0 0 8px rgba(251,191,36,0.4)';
+        bar.style.width = activePct + '%';
+        if (active > limit && limit > 0) {
+          // In burst zone: green up to limit, orange for the burst portion
+          const limitPct = (limit / barMax) * 100;
+          bar.style.background = `linear-gradient(90deg, #32CD32 0%, #32CD32 ${limitPct}%, #fd7e14 ${limitPct}%, #fd7e14 100%)`;
+          bar.style.boxShadow = '0 0 8px rgba(253,126,20,0.4)';
         } else {
-          bar.style.background = 'linear-gradient(90deg,#32CD32,#32CD32)';
+          // Within soft cap: solid green
+          bar.style.background = '#32CD32';
           bar.style.boxShadow = '0 0 8px rgba(50,205,50,0.4)';
         }
+        // Dotted overlay (upstream concurrent)
+        document.getElementById('concurrencyUpstreamBar').style.width = upstreamPct + '%';
+        document.getElementById('concUsageText').textContent = active + ' of ' + barMax + ' sessions';
+        const pctVsSoft = limit > 0 ? Math.min(200, (active / limit) * 100) : (barMax > 0 ? (active / barMax) * 100 : 0);
+        document.getElementById('concPctText').textContent = parseFloat(pctVsSoft.toFixed(2)) + '%';
         // Detail items
         const detailGrid = document.getElementById('concurrencyDetailGrid');
         const details = [];
         if (d.user_id) {
           umansUserId = d.user_id;
-          details.push({ label: 'User ID', value: d.user_id, masked: true });
-        }
-        if (active !== concurrent) {
-          details.push({ label: 'Concurrent', value: concurrent.toString() });
+          const topUid = document.getElementById('topUserId');
+          if (topUid) {
+            topUid.dataset.userid = d.user_id;
+            if (!topUid.classList.contains('revealed')) {
+              topUid.textContent = '•'.repeat(Math.min(d.user_id.length, 12));
+            }
+          }
         }
         if (queued > 0) {
           details.push({ label: 'Queued', value: queued.toString(), warn: true });
-        }
-        if (limit > 0) {
-          const remaining = Math.max(0, limit - concurrent);
-          details.push({ label: 'Available', value: remaining.toString() });
         }
         detailGrid.innerHTML = details.map(d =>
           `<div class="col-${details.length <= 2 ? '6' : '4'}"><div class="usage-detail-item"><div class="usage-detail-label">${escapeHtml(d.label)}</div><div class="usage-detail-value" style="color:${d.warn?'#fbbf24':'#fff'}${d.masked?'':';font-variant-numeric:tabular-nums'}">${d.masked?`<span class="masked-userid" data-userid="${escapeHtml(d.value)}" onclick="this.classList.toggle('revealed');this.textContent=this.classList.contains('revealed')?this.dataset.userid:'${'•'.repeat(Math.min(d.value.length, 12))}'" style="cursor:pointer">${'•'.repeat(Math.min(d.value.length, 12))}</span>`:escapeHtml(d.value)}</div></div></div>`
@@ -658,14 +693,9 @@
           } else {
             setWallpaperActive('none');
           }
-          // Sleev toggle init
-          const sleevToggle = document.getElementById('sleevToggle');
-          const sleevLabel = document.getElementById('sleevStatusLabel');
-          if (sleevToggle) {
-            sleevToggle.checked = !!cd.sleevEnabled;
-            if (sleevLabel) sleevLabel.textContent = cd.sleevEnabled ? 'On' : 'Off';
-            pollSleevStatus();
-          }
+          // Sleev init
+          setSleevActive(!!cd.sleevEnabled);
+          pollSleevStatus();
         }
         renderModels(); renderTokenPools(); updateStats(); await fetchUsage();
         setTimeout(initLiquidGlass, 50);
@@ -675,7 +705,7 @@
 
     async function fetchUsage() {
       try {
-        const ur=await fetch('/api/umans/usage');
+        const ur=await fetch('/api/umans/usage?fresh=1');
         const u=await ur.json();
         const usage = u.usage || {};
         const win = u.window || {};
@@ -684,13 +714,11 @@
         const tokensIn = usage.tokens_in || 0;
         const tokensOut = usage.tokens_out || 0;
         const cached = usage.tokens_cached || 0;
-        const winTokens = tokensIn + tokensOut;
+        const throttled = u.throttled ?? 0;
         const cachedPct = tokensIn > 0 ? ((cached/tokensIn)*100).toFixed(1) : '0.0';
         document.getElementById('totalRequests').textContent = winReqs.toLocaleString();
-        document.getElementById('totalTokens').textContent = winTokens.toLocaleString();
+        document.getElementById('throttledCount').textContent = throttled.toLocaleString();
         document.getElementById('cachedPct').textContent = cachedPct + '%';
-        const labelEl = document.getElementById('totalTokensLabel');
-        if (labelEl) { labelEl.textContent = 'Tokens'; }
         if (plan.display_name) {
           document.getElementById('planBadge').textContent = plan.display_name;
           document.getElementById('planBadge').style.display = '';
@@ -699,36 +727,19 @@
         }
         const detailGrid = document.getElementById('usageDetailGrid');
         const details = [];
+        if (win.started_at) {
+          const start = new Date(win.started_at);
+          details.push({label:'Start Time', value: start.toLocaleString()});
+        }
         details.push({label:'Tokens In', value: tokensIn.toLocaleString()});
         details.push({label:'Tokens Out', value: tokensOut.toLocaleString()});
-        details.push({label:'Tokens Cached', value: cached.toLocaleString()});
-        if (usage.remaining_requests !== null && usage.remaining_requests !== undefined) {
-          details.push({label:'Remaining', value: usage.remaining_requests.toLocaleString()});
-        }
         if (usage.priority && usage.priority.low) {
           details.push({label:'Priority', value: 'Low' + (usage.priority.reason ? ' (' + usage.priority.reason + ')' : ''), warn: true});
         }
         detailGrid.innerHTML = details.map(d =>
           `<div class="col-4"><div class="usage-detail-item"><div class="usage-detail-label">${escapeHtml(d.label)}</div><div class="usage-detail-value" style="color:${d.warn?'#fbbf24':'#fff'}">${escapeHtml(d.value)}</div></div></div>`
         ).join('');
-        if (win.started_at && win.resets_at) {
-          const start = new Date(win.started_at);
-          const end = new Date(win.resets_at);
-          const now = new Date();
-          const total = end - start;
-          const elapsed = now - start;
-          const pct = total > 0 ? Math.max(0, Math.min(100, (elapsed/total)*100)) : 0;
-          const remMin = win.remaining_minutes !== undefined ? win.remaining_minutes : Math.max(0, Math.round((end - now) / 60000));
-          document.getElementById('windowStarted').textContent = 'Started ' + start.toLocaleTimeString();
-          const resetsEl = document.getElementById('windowResets');
-          resetsEl.textContent = 'Resets in ' + remMin + 'm';
-          resetsEl.style.color = remMin < 5 ? '#fbbf24' : 'rgba(255,255,255,0.8)';
-          document.getElementById('windowProgressBar').style.width = pct + '%';
-          document.getElementById('windowResetBar').style.display = '';
-        } else {
-          document.getElementById('windowResetBar').style.display = 'none';
-        }
-      } catch { document.getElementById('totalTokens').textContent='--';document.getElementById('totalRequests').textContent='--';document.getElementById('cachedPct').textContent='--'; }
+      } catch { document.getElementById('throttledCount').textContent='--';document.getElementById('totalRequests').textContent='--';document.getElementById('cachedPct').textContent='--'; }
     }
 
     function updateStats() {
@@ -747,6 +758,15 @@
       }
     }
 
+    let usageIntervalId = null;
+    function setRefreshInterval(seconds) {
+      if (usageIntervalId) clearInterval(usageIntervalId);
+      const ms = parseInt(seconds) * 1000;
+      usageIntervalId = setInterval(fetchUsage, ms);
+      document.querySelectorAll('.btn-refresh').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.refresh === seconds.toString());
+      });
+    }
     async function checkHealth() {
       try{const r=await fetch('/healthz');const d=await r.json();if(d.ok){proxyData=d;document.getElementById('statusIndicator').className='status-indicator status-online';document.getElementById('statusText').textContent='Online';renderTokenPools();updateStats();showToast('Health OK');}else throw Error();}catch{document.getElementById('statusIndicator').className='status-indicator status-offline';document.getElementById('statusText').textContent='Offline';showToast('Health check failed','danger');}
     }
@@ -790,15 +810,17 @@
 
     document.addEventListener('DOMContentLoaded', async () => {
       hideDashboardUntilWallpaper();
+      document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
       loadConfig().then(() => {
         const loader = document.getElementById('wallpaperLoader');
         if (loader) loader.style.display = 'none';
       });
       updateStatus();
       setInterval(updateStatus,15000);
-      setInterval(fetchUsage,30000);
       fetchConcurrency();
       setInterval(fetchConcurrency,15000);
+      fetchUsage();
+      setRefreshInterval('30');
       document.getElementById('modelsContainer').addEventListener('click', (e) => {
         const tag = e.target.closest('.model-tag');
         if (tag && tag.dataset.model) toggleModel(tag.dataset.model);

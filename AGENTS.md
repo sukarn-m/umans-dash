@@ -222,14 +222,14 @@ Normalizes JSON Schema in tools to handle `$ref`, `$defs`, `definitions`, nullab
 ### 14. Usage Tracking & Concurrency (proxy.js:948-986)
 
 - `fetchUsage()` (line 951) — Fetches usage data from upstream `/usage` endpoint with 5-min cache
-- `fetchConcurrency()` (line 966) — Extracts `usage.concurrent_sessions`, `limits.concurrency.limit`, and `user_id` from cached usage data
-- `getEffectiveConcurrency()` (line 976) — Returns `{ concurrent, limit, overridden, user_id }`. If `config.overrideConcurrency > 0`, the effective concurrency limit is capped to `min(override, apiLimit)` (or override when the API limit is unknown).
+- `fetchConcurrency()` (line 966) — Extracts `usage.concurrent_sessions`, `limits.concurrency.limit`, `limits.concurrency.hard_cap`, and `user_id` from cached usage data
+- `getEffectiveConcurrency()` (line 976) — Returns `{ concurrent, limit, hard_cap, overridden, user_id }`. The proxy gates on `hard_cap ?? limit` (burst capacity) before queueing. If `config.overrideConcurrency > 0`, the effective `hard_cap` is capped to `min(override, apiHardCap)` (or override when the API hard_cap is unknown).
 - **Note**: `loginToApp()`, `EMAIL`, `PASSWORD`, and `APP_BASE` have been removed. The `/api/umans/login` and `/api/umans/logout` endpoints no longer exist. `/api/umans/user` is a stub returning `{ loggedIn: true, email: '' }`.
 
 ### 15. Dashboard (dashboard.html, ~824 lines)
 
-- **Window Card** — Stat Cards: Requests, Tokens, Cached % (3 inline stat cards). No Concurrent stat in this card.
-- **Concurrency Card** — Shows Active, Queued, Limit stats with progress bar and detail grid. No badge in the card header. User ID is shown in the detail grid with click-to-reveal masking (not blur/scramble).
+- **5-hour Window Card** — Stat Cards: Requests, Throttled, Cached % (3 inline stat cards). Detail grid: Start Time, Tokens In, Tokens Out. No Window Progress bar. Throttled counts proxy-side 503 queue-full rejections (reset when usage window changes).
+- **Current Concurrency Card** — 4 stat cards: Active, Queued, Limit (soft), Burst (hard cap). Progress bar scales to burst capacity with a vertical marker at the soft-limit position. Detail grid: User ID (click-to-reveal), Concurrent, Queued, Available. No badge in the card header.
 - **API Key section** — Key pool display with SS Mode (blur on hover). Collapsible.
 - **Models section** — View-only list of models from catalog, with enable/disable toggle per model. Collapsible.
 - **Quick Actions** — Check Health, Test Connection, Refresh Usage, Restart Proxy. Expanded by default.
@@ -248,8 +248,8 @@ The dashboard does not talk to UMANS directly. All UMANS data passes through the
 
 | Dashboard source | Proxy endpoint | Upstream call | Purpose |
 |---|---|---|---|
-| Requests / Tokens / Cached % (Window card) | `GET /api/umans/usage` | Upstream usage API | Current usage window |
-| Concurrency card (Active / Queued / Limit / User ID) | `GET /api/umans/concurrency` | Upstream usage API (via `fetchConcurrency`) | Active sessions, limit, queue depth |
+| Requests / Throttled / Cached % / Start Time / Tokens In / Tokens Out (5-hour Window card) | `GET /api/umans/usage` | Upstream usage API | Current usage window; throttled is proxy-side 503 queue-full count |
+| Concurrency card (Active / Queued / Limit / Burst / User ID) | `GET /api/umans/concurrency` | Upstream usage API (via `fetchConcurrency`) | Active sessions, soft limit, hard cap, queue depth |
 
 #### `/api/umans/usage` response shape
 
@@ -264,16 +264,18 @@ Proxy forwards an object shaped like:
     "tokens_cached": 9360000
   },
   "window": { /* optional date/scope metadata from UMANS */ },
-  "plan": { /* optional plan info, e.g. { "display_name": "..." } */ }
+  "plan": { /* optional plan info, e.g. { "display_name": "..." } */ },
+  "throttled": 0
 }
 ```
 
 The dashboard derives:
 - `Requests = usage.requests_in_window`
-- `Tokens = usage.tokens_in + usage.tokens_out`
+- `Throttled = throttled` (proxy-side count of 503 queue-full rejections, reset when usage window changes)
 - `Cached % = (usage.tokens_cached / usage.tokens_in) * 100`
-
-It will prefer fields under `u.window` if that object contains usage fields, falling back to `u.usage`.
+- `Start Time = window.started_at`
+- `Tokens In = usage.tokens_in`
+- `Tokens Out = usage.tokens_out`
 
 #### `/api/umans/usage-history` response shape
 
@@ -370,7 +372,7 @@ Zero external npm dependencies — uses only Node.js built-in modules: `fs`, `pa
 - `activeRequests` — Counter of in-flight upstream requests
 - `requestQueue` — FIFO array of pending requests
 - `MAX_QUEUE_SIZE` (256) — Hard cap on queue depth. When the queue is full, new requests are rejected with HTTP 503 (`queue_full` / `overloaded_error`).
-- `processQueue()` — Dequeues when `activeRequests < limit`
+- `processQueue()` — Dequeues when `activeRequests < gate` (where gate = `hard_cap ?? limit`)
 - Each completed request calls `processQueue()` via `.finally()`
 - Both OpenAI (`/v1/chat/completions`) and Anthropic (`/v1/messages`) paths participate in the same queue.
 

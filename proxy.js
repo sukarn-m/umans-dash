@@ -947,10 +947,14 @@ async function handleI18n(req, res) {
 
 let usageCache = { data: null, time: 0, ttl: 5 * 60 * 1000 };
 let lastConcurrency = { concurrent: 0, limit: null, user_id: null };
+let throttledCount = 0;
+let throttledWindowStart = null;
 
-async function fetchUsage() {
+function bumpThrottled() { throttledCount++; }
+
+async function fetchUsage(fresh = false) {
   if (!config.apiKey) return null;
-  if (usageCache.data && Date.now() - usageCache.time < usageCache.ttl) return usageCache.data;
+  if (!fresh && usageCache.data && Date.now() - usageCache.time < usageCache.ttl) return usageCache.data;
   try {
     const resp = await fetch(`${config.upstreamBaseURL}/usage`, {
       headers: { 'Authorization': `Bearer ${config.apiKey}`, 'Accept': 'application/json' },
@@ -958,31 +962,39 @@ async function fetchUsage() {
     });
     if (!resp.ok) return usageCache.data;
     const data = await resp.json();
+    // Reset throttle counter when a new usage window begins
+    const winStart = data?.window?.started_at ?? null;
+    if (winStart && winStart !== throttledWindowStart) {
+      throttledWindowStart = winStart;
+      throttledCount = 0;
+    }
     usageCache = { data, time: Date.now(), ttl: 5 * 60 * 1000 };
     return data;
   } catch (e) { return usageCache.data; }
 }
 
-async function fetchConcurrency() {
-  const data = await fetchUsage();
-  if (!data) return { concurrent: 0, limit: null, user_id: null };
+async function fetchConcurrency(fresh = false) {
+  const data = await fetchUsage(fresh);
+  if (!data) return { concurrent: 0, limit: null, hard_cap: null, user_id: null };
   const concurrent = data?.usage?.concurrent_sessions ?? 0;
   const limit = data?.limits?.concurrency?.limit ?? null;
+  const hard_cap = data?.limits?.concurrency?.hard_cap ?? null;
   const user_id = data?.user_id ?? null;
-  lastConcurrency = { concurrent, limit, user_id };
-  return { concurrent, limit, user_id };
+  lastConcurrency = { concurrent, limit, hard_cap, user_id };
+  return { concurrent, limit, hard_cap, user_id };
 }
 
 function getEffectiveConcurrency() {
   const apiLimit = lastConcurrency.limit;
+  const apiHardCap = lastConcurrency.hard_cap;
   const apiConcurrent = lastConcurrency.concurrent || 0;
   const apiUserId = lastConcurrency.user_id || null;
   const override = config?.overrideConcurrency || 0;
   if (override > 0) {
-    const effectiveLimit = apiLimit !== null ? Math.min(override, apiLimit) : override;
-    return { concurrent: apiConcurrent, limit: effectiveLimit, overridden: true, user_id: apiUserId };
+    const cap = apiHardCap !== null ? Math.min(override, apiHardCap) : override;
+    return { concurrent: apiConcurrent, limit: apiLimit, hard_cap: cap, overridden: true, user_id: apiUserId };
   }
-  return { concurrent: apiConcurrent, limit: apiLimit, overridden: false, user_id: apiUserId };
+  return { concurrent: apiConcurrent, limit: apiLimit, hard_cap: apiHardCap, overridden: false, user_id: apiUserId };
 }
 
 const msgText = (m) => typeof m.content === 'string' ? m.content : (Array.isArray(m.content) ? m.content.find(p => p?.type === 'text')?.text || '' : '');
@@ -2259,9 +2271,10 @@ async function handleModels(req, res) {
 
 function processQueue() {
   if (requestQueue.length === 0) return;
-  const limit = getEffectiveConcurrency().limit;
-  if (limit === null) return;
-  while (requestQueue.length > 0 && activeRequests < limit) {
+  const eff = getEffectiveConcurrency();
+  const gate = eff.hard_cap ?? eff.limit;
+  if (gate === null) return;
+  while (requestQueue.length > 0 && activeRequests < gate) {
     const item = requestQueue.shift();
     if (item.res.writableEnded || item.res.destroyed) continue;
     activeRequests++;
@@ -2284,9 +2297,10 @@ async function handleChatCompletions(req, res) {
   const requestedModel = (payload.model || '').trim();
   if (!requestedModel) { writeOpenAIError(res, 400, 'model is required', 'invalid_request_error', ''); return; }
 
-  const limit = getEffectiveConcurrency().limit;
-  if (limit !== null && activeRequests >= limit) {
-    if (requestQueue.length >= MAX_QUEUE_SIZE) { writeOpenAIError(res, 503, 'concurrency queue full', 'server_error', 'queue_full'); return; }
+  const gate = getEffectiveConcurrency();
+  const gateLimit = gate.hard_cap ?? gate.limit;
+  if (gateLimit !== null && activeRequests >= gateLimit) {
+    if (requestQueue.length >= MAX_QUEUE_SIZE) { bumpThrottled(); writeOpenAIError(res, 503, 'concurrency queue full', 'server_error', 'queue_full'); return; }
     requestQueue.push({ res, payload, model: requestedModel, writeError: writeOpenAIError, writePassthroughError, req });
     return;
   }
@@ -2397,9 +2411,10 @@ async function handleAnthropicMessages(req, res) {
   // image-count cap the OpenAI path uses so UMANS never sees > MAX_IMAGES images.
   limitImagesInMessages(anthropicPayload, config.maxImages);
 
-  const limit = getEffectiveConcurrency().limit;
-  if (limit !== null && activeRequests >= limit) {
-    if (requestQueue.length >= MAX_QUEUE_SIZE) { writeAnthropicError(res, 503, 'concurrency queue full', 'overloaded_error'); return; }
+  const gate = getEffectiveConcurrency();
+  const gateLimit = gate.hard_cap ?? gate.limit;
+  if (gateLimit !== null && activeRequests >= gateLimit) {
+    if (requestQueue.length >= MAX_QUEUE_SIZE) { bumpThrottled(); writeAnthropicError(res, 503, 'concurrency queue full', 'overloaded_error'); return; }
     requestQueue.push({ res, payload: anthropicPayload, model: requestedModel, writeError: writeAnthropicError, writePassthroughError: writeAnthropicPassthroughError, req, format: 'anthropic' });
     return;
   }
@@ -2954,10 +2969,11 @@ async function handleRequest(req, res) {
   if (pathname === '/api/umans/usage' && req.method === 'GET') {
     (async () => {
       try {
-        const usageRaw = await fetchUsage();
+        const fresh = parsedUrl.searchParams.get('fresh') === '1';
+        const usageRaw = await fetchUsage(fresh);
         const usage = usageRaw?.usage ?? null;
         const win = usageRaw?.window ?? null;
-        writeJSON(res, 200, { usage, window: win, plan: usageRaw?.plan ?? null });
+        writeJSON(res, 200, { usage, window: win, plan: usageRaw?.plan ?? null, throttled: throttledCount });
       } catch (e) {
         if (!res.writableEnded) writeJSON(res, 500, { error: e.message });
       }
@@ -2973,7 +2989,8 @@ async function handleRequest(req, res) {
   if (pathname === '/api/umans/concurrency' && req.method === 'GET') {
     (async () => {
       try {
-        const data = await fetchConcurrency();
+        const fresh = parsedUrl.searchParams.get('fresh') === '1';
+        const data = await fetchConcurrency(fresh);
         const effective = getEffectiveConcurrency();
         writeJSON(res, 200, { ...data, ...effective, active: activeRequests, queued: requestQueue.length });
       } catch (e) {
