@@ -3,25 +3,22 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title data-i18n="app_title">UMANS Proxy Dashboard</title>
+  <title>UMANS Proxy Dashboard</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
   <style>
     :root { --primary-color: #0d6efd; --secondary-color: #6c757d; --success-color: #32CD32; --bs-success: #32CD32; --bs-success-rgb: 50,205,50; --danger-color: #dc3545; }
-    body { margin:0; min-height:100vh; padding:0; background-color:#0d1117; }
-    .forced-hint { margin-left:6px; font-size:10px; color:rgba(255,255,255,0.55); text-transform:uppercase; letter-spacing:0.4px; }
-    .translate-overlay { position: fixed; inset: 0; z-index: 100000; background: rgba(0,0,0,0.25); display: none; align-items: center; justify-content: center; flex-direction: column; gap: 16px; color: white; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
-    .translate-overlay.show { display: flex; }
-    .translate-overlay .spinner-ring { width: 64px; height: 64px; border-radius: 50%; border: 4px solid rgba(255,255,255,0.15); border-top-color: #32CD32; animation: translate-spin 0.9s linear infinite; }
-    .translate-overlay .title { font-size: 22px; font-weight: 600; letter-spacing: 0.4px; }
-    .translate-overlay .subtitle { font-size: 13px; color: rgba(255,255,255,0.65); max-width: 320px; text-align: center; line-height: 1.5; }
-    .translate-cancel { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: rgba(255,255,255,0.8); padding: 6px 14px; border-radius: 6px; font-size: 13px; cursor: pointer; }
-    @keyframes translate-spin { to { transform: rotate(360deg); } }
+    body { margin:0; min-height:100vh; padding:0; }
     .dashboard-container { position:relative; z-index:10; max-width:1200px; margin:0 auto; overflow-x:hidden; }
     .card { position:relative; border:none; border-radius:var(--glass-radius,12px); margin-bottom:20px; background:transparent!important; }
     .glass-panel { position:absolute; inset:0; z-index:0; border-radius:inherit; overflow:hidden; }
     .glass-panel::before { content:''; position:absolute; inset:0; z-index:1; border-radius:inherit; background-color:rgba(255,255,255,0.04); pointer-events:none; }
     .card-content { position:relative; z-index:3; border-radius:inherit; overflow:hidden; background:rgba(0,0,0,0.22); width:100%; }
+    body.has-wallpaper .card-content { background:rgba(0,0,0,0.55); }
+    body.has-wallpaper .stat-inline-card .card-content { background:rgba(0,0,0,0.45); }
+    body.has-wallpaper .usage-detail-item { background:rgba(0,0,0,0.45); }
+    body.has-wallpaper .card-body { backdrop-filter:blur(20px)!important; -webkit-backdrop-filter:blur(20px)!important; }
+    body.has-wallpaper .test-chat-header, body.has-wallpaper .pool-card { background:rgba(0,0,0,0.5); }
     .card-header { background:rgba(0,0,0,0.2)!important; border-bottom:1px solid rgba(255,255,255,0.15); font-weight:600; text-transform:uppercase; letter-spacing:0.5px; font-size:14px; color:white; padding:0.4rem 1.25rem; position:relative; z-index:4; }
     .card-body { padding:0.5rem; position:relative; z-index:4; backdrop-filter:blur(13px)!important; -webkit-backdrop-filter:blur(13px)!important; }
     .card-body.env-body { padding-top:0.35rem; padding-bottom:0.35rem; padding-left:0.6rem; padding-right:0.6rem; font-size:0.75rem; }
@@ -40,8 +37,6 @@
     .status-unknown { background-color:var(--secondary-color); }
     .status-reconnecting { background-color:#ffd700; box-shadow:0 0 10px #ffd700; animation:pulse 1s ease-in-out infinite; }
     @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
-    .token-blurred { filter:blur(5px); transition:filter 0.2s ease; }
-    .token-blurred:hover { filter:blur(0)!important; }
     .btn-outline-action { border:1px solid rgba(255,255,255,0.8); color:rgba(255,255,255,0.8); background:transparent; font-size:0.75rem!important; padding:0.25rem 0.5rem!important; display:inline-flex!important; align-items:center; justify-content:center; text-decoration:none!important; transition:all 0.15s ease; }
     #section-actions .btn-outline-action { justify-content:flex-start; text-align:left; }
     .btn-outline-action:hover { background:rgba(255,255,255,0.15); border-color:rgba(255,255,255,0.9)!important; color:#fff!important; outline:0; }
@@ -82,12 +77,6 @@
   </style>
 </head>
 <body>
-  <div class="translate-overlay" id="translateOverlay">
-    <div class="spinner-ring"></div>
-    <div class="title" data-i18n="overlay_translating">Translating</div>
-    <div class="subtitle" id="translateOverlaySubtitle" data-i18n="overlay_translating_sub" data-i18n-template="overlay_translating_sub">Translating UI to {lang}...</div>
-    <button class="translate-cancel" id="translateCancelBtn" type="button"><span data-i18n="btn_cancel">Cancel</span></button>
-  </div>
 
   <svg style="position:absolute;overflow:hidden;width:0;height:0" color-interpolation-filters="sRGB">
     <defs id="glass-defs"></defs>
@@ -100,8 +89,8 @@
       <div class="glass-panel"></div>
       <div class="card-content px-2">
         <div class="d-flex justify-content-between align-items-center">
-          <div><h4 class="mb-0"><i class="bi bi-cloud-lightning me-2"></i><span data-i18n="app_title">UMANS Proxy</span></h4></div>
-          <div><span id="statusIndicator" class="status-indicator status-unknown"></span><span id="statusText" class="fw-medium" data-i18n="status_checking">Checking...</span></div>
+          <div><h4 class="mb-0"><i class="bi bi-cloud-lightning me-2"></i><span>UMANS Proxy</span></h4></div>
+          <div><span id="statusIndicator" class="status-indicator status-unknown"></span><span id="statusText" class="fw-medium">Checking...</span></div>
         </div>
       </div>
     </div>
@@ -112,24 +101,24 @@
           <div class="glass-panel"></div>
           <div class="card-content">
             <div class="card-header d-flex justify-content-between align-items-center">
-              <span><i class="bi bi-window me-2"></i><span data-i18n="section_window">Window</span></span>
+              <span><i class="bi bi-window me-2"></i><span>Window</span></span>
               <span id="planBadge" class="badge bg-primary" style="font-size:0.7rem;font-weight:600;border:1px solid rgba(102,126,234,0.6);box-shadow:0 0 10px rgba(102,126,234,0.4)"></span>
             </div>
             <div class="card-body">
               <div class="row g-2 mb-2">
                 <div class="col-4">
-                  <div class="card stat-inline-card h-100"><div class="card-content"><div class="stats-value" id="totalRequests">--</div><div class="stats-label" data-i18n="label_requests">Requests</div></div></div>
+                  <div class="card stat-inline-card h-100"><div class="card-content"><div class="stats-value" id="totalRequests">--</div><div class="stats-label">Requests</div></div></div>
                 </div>
                 <div class="col-4">
-                  <div class="card stat-inline-card h-100"><div class="card-content"><div class="stats-value" id="totalTokens">--</div><div class="stats-label" id="totalTokensLabel" data-i18n="label_tokens">Tokens</div></div></div>
+                  <div class="card stat-inline-card h-100"><div class="card-content"><div class="stats-value" id="totalTokens">--</div><div class="stats-label" id="totalTokensLabel">Tokens</div></div></div>
                 </div>
                 <div class="col-4">
-                  <div class="card stat-inline-card h-100"><div class="card-content"><div class="stats-value" id="cachedPct">--</div><div class="stats-label" data-i18n="label_cached_pct">Cached %</div></div></div>
+                  <div class="card stat-inline-card h-100"><div class="card-content"><div class="stats-value" id="cachedPct">--</div><div class="stats-label">Cached %</div></div></div>
                 </div>
               </div>
               <div id="usageDetailGrid" class="row g-2" style="font-size:0.75rem"></div>
               <div id="windowResetBar" class="mt-4" style="display:none">
-                <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.5);margin-bottom:3px" data-i18n="label_window_progress">Window Progress</div>
+                <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.5);margin-bottom:3px">Window Progress</div>
                 <div class="d-flex justify-content-between align-items-center mb-1" style="font-size:0.75rem;color:rgba(255,255,255,0.8)">
                   <span id="windowStarted"></span>
                   <span id="windowResets"></span>
@@ -146,22 +135,22 @@
           <div class="glass-panel"></div>
           <div class="card-content">
             <div class="card-header d-flex justify-content-between align-items-center">
-              <span><i class="bi bi-people-fill me-2"></i><span data-i18n="section_concurrency">Concurrency</span></span>
+              <span><i class="bi bi-people-fill me-2"></i><span>Concurrency</span></span>
             </div>
             <div class="card-body">
               <div class="row g-2 mb-3">
                 <div class="col-4">
-                  <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:rgba(50,205,50,0.5)"><div class="stats-value" id="concActive">--</div><div class="stats-label" data-i18n="label_active">Active</div></div></div>
+                  <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:rgba(50,205,50,0.5)"><div class="stats-value" id="concActive">--</div><div class="stats-label">Active</div></div></div>
                 </div>
                 <div class="col-4">
-                  <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:rgba(255,193,7,0.5)"><div class="stats-value" id="concQueued">--</div><div class="stats-label" data-i18n="label_queued">Queued</div></div></div>
+                  <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:rgba(255,193,7,0.5)"><div class="stats-value" id="concQueued">--</div><div class="stats-label">Queued</div></div></div>
                 </div>
                 <div class="col-4">
-                  <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:rgba(13,110,253,0.5)"><div class="stats-value" id="concLimit">--</div><div class="stats-label" data-i18n="label_limit">Limit</div></div></div>
+                  <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:rgba(13,110,253,0.5)"><div class="stats-value" id="concLimit">--</div><div class="stats-label">Limit</div></div></div>
                 </div>
               </div>
               <div class="mt-2">
-                <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.5);margin-bottom:3px" data-i18n="label_concurrency_usage">Concurrency Usage</div>
+                <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.5);margin-bottom:3px">Concurrency Usage</div>
                 <div class="d-flex justify-content-between align-items-center mb-1" style="font-size:0.75rem;color:rgba(255,255,255,0.8)">
                   <span id="concUsageText">0 of 0 sessions</span>
                   <span id="concPctText">0%</span>
@@ -186,10 +175,10 @@
           <div class="glass-panel"></div>
           <div class="card-content">
             <div class="card-header collapsible-header d-flex justify-content-between align-items-center" onclick="toggleSection('tokens')">
-              <span><i class="bi bi-chevron-down toggle-icon collapsed me-1"></i><i class="bi bi-key-fill me-2"></i><span data-i18n="section_api_key">API Key</span></span>
+              <span><i class="bi bi-chevron-down toggle-icon collapsed me-1"></i><i class="bi bi-key-fill me-2"></i><span>API Key</span></span>
               <span class="d-flex align-items-stretch gap-2" style="height:100%">
                 <span class="badge bg-secondary d-flex align-items-center" id="tokenCountBadge" onclick="event.stopPropagation()">0</span>
-                <button class="btn btn-sm btn-outline-action rounded-0" onclick="event.stopPropagation();openKeysModal()" style="font-size:11px"><i class="bi bi-pencil me-1"></i><span data-i18n="btn_manage">Manage</span></button>
+                <button class="btn btn-sm btn-outline-action rounded-0" onclick="event.stopPropagation();openKeysModal()" style="font-size:11px"><i class="bi bi-pencil me-1"></i><span>Manage</span></button>
               </span>
             </div>
             <div class="card-body collapse-section collapsed" id="section-tokens"><div id="tokenPoolsContainer"></div></div>
@@ -200,11 +189,11 @@
           <div class="glass-panel"></div>
           <div class="card-content">
             <div class="card-header collapsible-header d-flex justify-content-between align-items-center" onclick="toggleSection('models')">
-              <span><i class="bi bi-chevron-down toggle-icon me-1"></i><i class="bi bi-cpu-fill me-2"></i><span data-i18n="section_models">Models</span></span>
+              <span><i class="bi bi-chevron-down toggle-icon me-1"></i><i class="bi bi-cpu-fill me-2"></i><span>Models</span></span>
               <span class="badge bg-secondary" id="modelCountBadge">0</span>
             </div>
             <div class="card-body collapse-section" id="section-models">
-              <p class="text-muted mb-2" style="font-size:10px;line-height:1.45;word-break:break-word;overflow-wrap:break-word" data-i18n="models_managed_hint">Models are configured in <code style="word-break:break-all;color:#6ea8fe">.config/config.json</code> under <code style="word-break:break-all;color:#6ea8fe">ENABLED_MODELS</code>.</p>
+              <p class="text-muted mb-2" style="font-size:10px;line-height:1.45;word-break:break-word;overflow-wrap:break-word">Models are configured in <code style="word-break:break-all;color:#6ea8fe">.config/config.json</code> under <code style="word-break:break-all;color:#6ea8fe">ENABLED_MODELS</code>.</p>
               <div id="modelsContainer"></div>
             </div>
           </div>
@@ -214,14 +203,14 @@
           <div class="glass-panel"></div>
           <div class="card-content">
             <div class="card-header collapsible-header" onclick="toggleSection('actions')">
-              <i class="bi bi-chevron-down toggle-icon me-1"></i><i class="bi bi-lightning-charge-fill me-2"></i><span data-i18n="section_quick_actions">Quick Actions</span>
+              <i class="bi bi-chevron-down toggle-icon me-1"></i><i class="bi bi-lightning-charge-fill me-2"></i><span>Quick Actions</span>
             </div>
             <div class="card-body collapse-section" id="section-actions">
               <div class="d-grid gap-2">
-                <button class="btn btn-outline-action" onclick="checkHealth()" data-i18n="btn_check_health">Check Health</button>
-                <button class="btn btn-outline-action" onclick="testConnection()" data-i18n="btn_test_connection">Test Connection</button>
-                <button class="btn btn-outline-action" onclick="fetchUsage()" data-i18n="btn_refresh_usage">Refresh Usage</button>
-                <button class="btn btn-outline-action" id="restartBtn" onclick="restartProxy()" data-i18n="btn_restart_proxy">Restart Proxy</button>
+                <button class="btn btn-outline-action" onclick="checkHealth()">Check Health</button>
+                <button class="btn btn-outline-action" onclick="testConnection()">Test Connection</button>
+                <button class="btn btn-outline-action" onclick="fetchUsage()">Refresh Usage</button>
+                <button class="btn btn-outline-action" id="restartBtn" onclick="restartProxy()">Restart Proxy</button>
               </div>
             </div>
           </div>
@@ -231,46 +220,38 @@
           <div class="glass-panel"></div>
           <div class="card-content">
             <div class="card-header collapsible-header" onclick="toggleSection('env')">
-              <i class="bi bi-chevron-down toggle-icon me-1"></i><i class="bi bi-info-circle-fill me-2"></i><span data-i18n="section_environment">Environment</span>
+              <i class="bi bi-chevron-down toggle-icon me-1"></i><i class="bi bi-info-circle-fill me-2"></i><span>Environment</span>
             </div>
             <div class="card-body env-body collapse-section" id="section-env">
-              <div class="row"><div class="col-6 mb-2"><small class="text-muted" data-i18n="env_runtime">Runtime</small><div class="fw-medium" id="runtimeInfo">-</div></div><div class="col-6 mb-2"><small class="text-muted" data-i18n="env_port">Port</small><div class="fw-medium" id="portInfo">-</div></div></div>
-              <div class="row"><div class="col-6 mb-2"><small class="text-muted" data-i18n="env_started_at">Started At</small><div class="fw-medium" id="startedAt">-</div></div><div class="col-6 mb-2"><small class="text-muted" data-i18n="env_ss_mode">SS Mode</small><div class="form-check form-switch" id="ssModeSwitch" style="margin:0;min-height:0;padding:0;display:flex;align-items:center"><input class="form-check-input" type="checkbox" id="blurTokensEnv" onchange="toggleBlurTokens(this.checked)" style="margin:0"><label class="form-check-label text-muted" for="blurTokensEnv" id="ssModeLabel" style="cursor:pointer;font-size:0.6rem;margin:0;padding-left:0.35rem">Off</label></div></div></div>
+              <div class="row"><div class="col-6 mb-2"><small class="text-muted">Runtime</small><div class="fw-medium" id="runtimeInfo">-</div></div><div class="col-6 mb-2"><small class="text-muted">Port</small><div class="fw-medium" id="portInfo">-</div></div></div>
+              <div class="row"><div class="col-6 mb-2"><small class="text-muted">Started At</small><div class="fw-medium" id="startedAt">-</div></div></div>
               <div class="mb-2">
-                <label class="form-label" style="font-size:0.7rem;color:rgba(255,255,255,0.5);margin-bottom:2px" data-i18n="env_wallpaper">Wallpaper</label>
+                <label class="form-label" style="font-size:0.7rem;color:rgba(255,255,255,0.5);margin-bottom:2px">Wallpaper</label>
                 <div class="btn-group w-100" role="group" id="wallpaperGroup">
-                  <button class="btn btn-outline-action btn-wp" data-wp="none" onclick="setWallpaper('none')" data-i18n="wp_none">None</button>
-                  <button class="btn btn-outline-action btn-wp" data-wp="bing" onclick="setWallpaper('bing')" data-i18n="wp_bing">Bing</button>
-                  <button class="btn btn-outline-action btn-wp" data-wp="wallhaven" onclick="setWallpaper('wallhaven')" data-i18n="wp_wallhaven">Wallhaven</button>
-                   <button class="btn btn-outline-action btn-wp" data-wp="freegen" onclick="setWallpaper('freegen')" data-i18n="wp_freegen">AI (FreeGen)</button>
+                  <button class="btn btn-outline-action btn-wp" data-wp="none" onclick="setWallpaper('none')">None</button>
+                  <button class="btn btn-outline-action btn-wp" data-wp="bing" onclick="setWallpaper('bing')">Bing</button>
+                  <button class="btn btn-outline-action btn-wp" data-wp="wallhaven" onclick="setWallpaper('wallhaven')">Wallhaven</button>
+                   <button class="btn btn-outline-action btn-wp" data-wp="freegen" onclick="setWallpaper('freegen')">AI (FreeGen)</button>
                 </div>
               </div>
               <div class="mb-2" id="freegenPromptContainer" style="display:none">
-                <label class="form-label" style="font-size:0.65rem;color:rgba(255,255,255,0.5);margin-bottom:2px" data-i18n="freegen_prompt">AI (FreeGen) Prompt</label>
+                <label class="form-label" style="font-size:0.65rem;color:rgba(255,255,255,0.5);margin-bottom:2px">AI (FreeGen) Prompt</label>
                 <div class="input-group input-group-sm" style="gap:4px;margin-bottom:4px">
-                   <input type="text" class="form-control form-control-sm" id="freegenPromptInput" placeholder="Describe your wallpaper..." data-i18n-placeholder="freegen_placeholder" style="font-size:0.7rem;background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.2);color:white">
-                   <button class="btn btn-outline-action" style="font-size:0.6rem;padding:0.2rem 0.5rem;white-space:nowrap" onclick="useDefaultFreegenPrompt()" title="Load default prompt" data-i18n="freegen_default">Default</button>
-                    <button class="btn btn-success" style="font-size:0.65rem;padding:0.2rem 0.5rem;white-space:nowrap" id="freegenGenerateBtn" onclick="generateFreegenWallpaper()" data-i18n="freegen_generate">Generate</button>
+                   <input type="text" class="form-control form-control-sm" id="freegenPromptInput" placeholder="Describe your wallpaper..." style="font-size:0.7rem;background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.2);color:white">
+                   <button class="btn btn-outline-action" style="font-size:0.6rem;padding:0.2rem 0.5rem;white-space:nowrap" onclick="useDefaultFreegenPrompt()" title="Load default prompt">Default</button>
+                    <button class="btn btn-success" style="font-size:0.65rem;padding:0.2rem 0.5rem;white-space:nowrap" id="freegenGenerateBtn" onclick="generateFreegenWallpaper()">Generate</button>
                  </div>
                  <div id="freegenStatus" style="font-size:0.65rem;color:rgba(255,255,255,0.55);min-height:1rem"></div>
               </div>
               <div class="mb-2">
                 <div class="d-flex align-items-center justify-content-between">
-                  <small class="text-muted" data-i18n="env_sleev">Sleev (compress)</small>
+                  <small class="text-muted">Sleev (compress)</small>
                   <div class="form-check form-switch" style="margin:0;min-height:0;padding:0;display:flex;align-items:center">
                     <input class="form-check-input" type="checkbox" id="sleevToggle" onchange="toggleSleev(this.checked)" style="margin:0">
                     <label class="form-check-label text-muted" for="sleevToggle" id="sleevStatusLabel" style="cursor:pointer;font-size:0.6rem;margin:0;padding-left:0.35rem">Off</label>
                   </div>
                 </div>
                 <div id="sleevStatus" style="font-size:0.6rem;color:rgba(255,255,255,0.5);min-height:0.8rem;margin-top:2px"></div>
-              </div>
-              <div class="mb-2">
-                <div class="d-flex align-items-center justify-content-between">
-                  <small class="text-muted" data-i18n="autotranslate_label">Autotranslation</small>
-                  <label id="autotranslateToggle" class="form-check form-switch" style="margin:0;min-height:0;padding:0;display:flex;align-items:center;cursor:pointer">
-                    <input class="form-check-input" type="checkbox" id="autotranslateCheckbox" style="margin:0;cursor:pointer;accent-color:#32CD32">
-                  </label>
-                </div>
               </div>
             </div>
           </div>
@@ -286,18 +267,18 @@
   <div class="modal fade" id="keysModal" tabindex="-1">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
       <div class="modal-content" style="background:#1a1d23;color:white;border:1px solid rgba(255,255,255,0.1)">
-        <div class="modal-header border-bottom-0"><h5 class="modal-title"><i class="bi bi-key-fill me-2"></i><span data-i18n="modal_manage_keys">Manage Keys</span></h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+        <div class="modal-header border-bottom-0"><h5 class="modal-title"><i class="bi bi-key-fill me-2"></i><span>Manage Keys</span></h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
         <div class="modal-body" id="keysModalBody">
           <div id="keysList"></div>
           <hr style="border-color:rgba(255,255,255,0.1)">
           <div class="mb-3">
-            <label class="form-label" data-i18n="modal_add_key">Add New Key</label>
-            <input type="text" class="form-control form-control-sm mb-2" id="newKeyName" placeholder="Key name" data-i18n-placeholder="key_name_placeholder">
-            <input type="text" class="form-control form-control-sm mb-2" id="newKey" placeholder="UMANS API key (sk-...)" data-i18n-placeholder="key_value_placeholder">
-            <button class="btn btn-success btn-sm w-100" onclick="addKey()"><i class="bi bi-plus-circle me-1"></i><span data-i18n="btn_add_key">Add Key</span></button>
+            <label class="form-label">Add New Key</label>
+            <input type="text" class="form-control form-control-sm mb-2" id="newKeyName" placeholder="Key name">
+            <input type="text" class="form-control form-control-sm mb-2" id="newKey" placeholder="UMANS API key (sk-...)">
+            <button class="btn btn-success btn-sm w-100" onclick="addKey()"><i class="bi bi-plus-circle me-1"></i><span>Add Key</span></button>
           </div>
         </div>
-        <div class="modal-footer border-top-0"><button class="btn btn-secondary btn-sm" data-bs-dismiss="modal" data-i18n="btn_close">Close</button></div>
+        <div class="modal-footer border-top-0"><button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button></div>
       </div>
     </div>
   </div>
@@ -354,135 +335,9 @@
       });
     }
 
-    let proxyData = null, enabledModels = [], allDisplayNames = {}, blurTokensEnabled = false, editingIdx = -1, umansUserId = '';
+    let proxyData = null, enabledModels = [], allDisplayNames = {}, editingIdx = -1, umansUserId = '';
     let disabledModels = new Set();
     const DEFAULT_FREEGEN_PROMPT = 'A breathtaking sci-fi landscape with glowing neon structures floating above a misty alien ocean, cinematic lighting, 8K, hyper-detailed, ethereal atmosphere, 16:9 wallpaper';
-
-    // --- i18n runtime ---
-    function t(key, fallback) {
-      if (window.__i18n && Object.prototype.hasOwnProperty.call(window.__i18n, key)) return window.__i18n[key];
-      return fallback !== undefined ? fallback : key;
-    }
-    function applyI18nToDocument() {
-      const dict = window.__i18n || {};
-      document.querySelectorAll('[data-i18n]').forEach(el => {
-        const key = el.getAttribute('data-i18n');
-        if (!Object.prototype.hasOwnProperty.call(dict, key)) return;
-        const isTpl = el.hasAttribute('data-i18n-template');
-        if (isTpl) {
-          const template = dict[key];
-          if (key === 'overlay_translating_sub') {
-            el.textContent = template.replace('{lang}', _currentLocaleNative || _currentLocale || '');
-          } else {
-            el.textContent = template;
-          }
-        } else {
-          el.textContent = dict[key];
-        }
-      });
-      document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
-        const key = el.getAttribute('data-i18n-placeholder');
-        if (Object.prototype.hasOwnProperty.call(dict, key)) el.setAttribute('placeholder', dict[key]);
-      });
-      document.querySelectorAll('[data-i18n-title]').forEach(el => {
-        const key = el.getAttribute('data-i18n-title');
-        if (Object.prototype.hasOwnProperty.call(dict, key)) el.setAttribute('title', dict[key]);
-      });
-    }
-
-    let _currentLocale = 'en';
-    let _currentLocaleNative = 'English';
-    let _hasApiKey = false;
-    const LOCALE_NATIVE_NAMES = {
-      en: 'English', de: 'Deutsch', fr: 'Français', es: 'Español', it: 'Italiano',
-      pt: 'Português', nl: 'Nederlands', pl: 'Polski', ru: 'Русский', uk: 'Українська',
-      tr: 'Türkçe', ja: '日本語', ko: '한국어', zh: '中文', ar: 'العربية',
-      cs: 'Čeština', ro: 'Română', hu: 'Magyar', sv: 'Svenska', da: 'Dansk',
-      fi: 'Suomi', no: 'Norsk', el: 'Ελληνικά', he: 'עברית', th: 'ไทย',
-      vi: 'Tiếng Việt', id: 'Bahasa Indonesia', hi: 'हिन्दी',
-    };
-    function getNativeName(locale) { return LOCALE_NATIVE_NAMES[locale] || (locale || '').toUpperCase(); }
-    function detectDashboardLocale() {
-      try {
-        const override = (new URLSearchParams(location.search).get('locale') || '').toLowerCase().split(/[-_]/)[0];
-        if (override) return override;
-        const stored = (localStorage.getItem('preferredLocale') || '').toLowerCase().split(/[-_]/)[0];
-        if (stored) return stored;
-        const navs = (navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || 'en']);
-        for (const raw of navs) { const tag = (raw || '').toLowerCase().split(/[-_]/)[0]; if (tag) return tag; }
-      } catch (e) {}
-      return 'en';
-    }
-    async function fetchI18nConfig() {
-      try { const r = await fetch('/api/i18n?config=1&nav=' + encodeURIComponent(detectDashboardLocale())); if (!r.ok) return {}; const d = await r.json(); _hasApiKey = !!d.has_key; return d; } catch (e) { return {}; }
-    }
-    async function fetchTranslations(locale, withGenerate) {
-      const u = new URL('/api/i18n', location.origin);
-      u.searchParams.set('locale', locale);
-      if (withGenerate) u.searchParams.set('generate', '1');
-      const resp = await fetch(u.toString());
-      if (!resp.ok) throw new Error('i18n http ' + resp.status);
-      return await resp.json();
-    }
-    function showTranslateOverlay(subtitle) {
-      const ov = document.getElementById('translateOverlay'); if (!ov) return;
-      const sub = ov.querySelector('.subtitle'); if (sub && subtitle) sub.textContent = subtitle;
-      ov.classList.add('show');
-    }
-    function hideTranslateOverlay() {
-      const ov = document.getElementById('translateOverlay'); if (ov) ov.classList.remove('show');
-    }
-    let _translateCancelled = false;
-    function bindTranslateCancel() {
-      const btn = document.getElementById('translateCancelBtn');
-      if (!btn) return;
-      btn.onclick = () => { _translateCancelled = true; hideTranslateOverlay(); };
-    }
-    async function applyTranslations(bundle, force) {
-      if (_translateCancelled && !force) return;
-      window.__i18n = bundle.strings || {};
-      _currentLocale = bundle.locale || 'en';
-      _currentLocaleNative = getNativeName(_currentLocale);
-      applyI18nToDocument();
-      if (typeof renderModels === 'function') try { renderModels(); } catch (e) {}
-      if (typeof renderTokenPools === 'function') try { renderTokenPools(); } catch (e) {}
-      if (typeof updateSsModeStatus === 'function') try { updateSsModeStatus(); } catch (e) {}
-      if (typeof updateStats === 'function') try { updateStats(); } catch (e) {}
-      setTimeout(initLiquidGlass, 50);
-    }
-
-    async function enableAutotranslate(forcedLocale) {
-      const locale = forcedLocale || detectDashboardLocale();
-      if (locale === 'en' || !_hasApiKey) {
-        return;
-      }
-      _currentLocale = locale;
-      _currentLocaleNative = getNativeName(locale);
-      _translateCancelled = false;
-      const subtitleTpl = t('overlay_translating_sub', 'Translating UI to {lang}...');
-      showTranslateOverlay(subtitleTpl.replace('{lang}', _currentLocaleNative));
-      try {
-        let bundle = await fetchTranslations(locale, false);
-        if (bundle.source !== 'umans-flash' && bundle.source !== 'builtin' && locale !== 'en') {
-          bundle = await fetchTranslations(locale, true);
-        }
-        if (!_translateCancelled) {
-          await applyTranslations(bundle);
-          localStorage.setItem('preferredLocale', locale);
-          const cb = document.getElementById('autotranslateCheckbox');
-          if (cb && !cb.checked) cb.checked = true;
-        }
-      } catch (e) {
-        console.error('[i18n] failed', e);
-        showToast(t('toast_translation_failed', 'Translation failed: {error}').replace('{error}', e.message), 'danger');
-      } finally {
-        hideTranslateOverlay();
-      }
-    }
-    function disableAutotranslate() {
-      localStorage.removeItem('preferredLocale');
-      location.reload();
-    }
 
     function showToast(m, type) { const d=document.createElement('div'); d.className=`toast align-items-center text-white bg-${type||'info'} border-0 show`; d.innerHTML=`<div class="d-flex"><div class="toast-body"></div><button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>`; d.querySelector('.toast-body').textContent = m; document.getElementById('toastContainer').appendChild(d); setTimeout(()=>d.remove(),3000); }
     function escapeHtml(t){if(t==null)return '';const d=document.createElement('div');d.textContent=String(t);return d.innerHTML.replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
@@ -501,11 +356,13 @@
       document.body.style.backgroundSize='cover';
       document.body.style.backgroundAttachment='fixed';
       document.body.style.backgroundColor='#0d1117';
+      document.body.classList.add('has-wallpaper');
     }
     function clearWallpaper() {
       if (_wallpaperObjUrl) { try { URL.revokeObjectURL(_wallpaperObjUrl); } catch {} _wallpaperObjUrl = null; }
       document.body.style.backgroundImage='none';
       document.body.style.backgroundColor='#0d1117';
+      document.body.classList.remove('has-wallpaper');
     }
     async function setWallpaper(source) {
       setWallpaperActive(source);
@@ -542,9 +399,9 @@
       const status = document.getElementById('freegenStatus');
       if (!input || !btn) return;
       const prompt = input.value.trim();
-      if (!prompt) { showToast(t('toast_freegen_missing_prompt', 'Enter a FreeGen prompt'), 'warning'); return; }
-      btn.disabled = true; btn.innerHTML = '<span class=\"spinner-border spinner-border-sm\" role=\"status\"></span> ' + t('freegen_generate', 'Generate');
-      if (status) status.textContent = t('freegen_status_generating', 'Generating via FreeGen (this may take ~10-30s)...');
+      if (!prompt) { showToast('Enter a FreeGen prompt', 'warning'); return; }
+      btn.disabled = true; btn.innerHTML = '<span class=\"spinner-border spinner-border-sm\" role=\"status\"></span> ' + 'Generate';
+      if (status) status.textContent = 'Generating via FreeGen (this may take ~10-30s)...';
       try {
         const r = await fetch('/api/bg-freegen', {
           method: 'POST',
@@ -554,31 +411,15 @@
         if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
         const blob = await r.blob();
         applyWallpaperBlob(blob);
-        if (status) status.textContent = t('freegen_status_applied', 'Wallpaper applied.');
-        showToast(t('toast_freegen_applied', 'FreeGen wallpaper generated!'), 'success');
+        if (status) status.textContent = 'Wallpaper applied.';
+        showToast('FreeGen wallpaper generated!', 'success');
       } catch (e) {
-        if (status) status.textContent = t('freegen_status_error_prefix', 'Error:') + ' ' + e.message;
-        showToast(t('toast_freegen_failed', 'FreeGen generation failed: {error}').replace('{error}', e.message), 'danger');
+        if (status) status.textContent = 'Error:' + ' ' + e.message;
+        showToast('FreeGen generation failed: {error}'.replace('{error}', e.message), 'danger');
       } finally {
-        btn.disabled = false; btn.textContent = t('freegen_generate', 'Generate');
+        btn.disabled = false; btn.textContent = 'Generate';
       }
     }
-    function updateSsModeStatus() {
-      const label = document.getElementById('ssModeLabel');
-      const input = document.getElementById('blurTokensEnv');
-      if (label) label.textContent = blurTokensEnabled ? t('ss_mode_on','On') : t('ss_mode_off','Off');
-      if (input) input.checked = blurTokensEnabled;
-    }
-    function toggleBlurTokens(c) {
-      blurTokensEnabled = c;
-      updateSsModeStatus();
-      renderTokenPools();
-      const modalEl = document.getElementById('keysModal');
-      if (modalEl && modalEl.classList.contains('show')) {
-        refreshKeysList();
-      }
-    }
-
     async function toggleSleev(enabled) {
       const label = document.getElementById('sleevStatusLabel');
       const status = document.getElementById('sleevStatus');
@@ -643,32 +484,23 @@
 
     function renderTokenPools() {
       const container = document.getElementById('tokenPoolsContainer');
-      const blur = blurTokensEnabled ? 'token-blurred' : '';
       if (!proxyData || !proxyData.token_state || !proxyData.token_state.length) {
-        container.innerHTML = '<div class="text-center py-3"><i class="bi bi-key" style="font-size:2rem;color:rgba(255,255,255,0.4)"></i><p class="mt-2 text-muted">' + escapeHtml(t('tokens_none','No API keys')) + '</p></div>';
+        container.innerHTML = '<div class="text-center py-3"><i class="bi bi-key" style="font-size:2rem;color:rgba(255,255,255,0.4)"></i><p class="mt-2 text-muted">' + escapeHtml('No API keys') + '</p></div>';
         document.getElementById('tokenCountBadge').textContent = '0'; return;
       }
       document.getElementById('tokenCountBadge').textContent = proxyData.token_state.length;
       container.innerHTML = proxyData.token_state.map(p => {
         const isOn = p.status === 'active';
-        return `<div class="pool-card"><div class="pool-header"><div class="pool-name">${escapeHtml(p.name)}</div><span class="badge rounded-pill" style="background:${isOn?'rgba(50,205,50,0.2)':'rgba(220,53,69,0.2)'};color:${isOn?'#32CD32':'#dc3545'};font-size:0.7rem;font-weight:600;border:1px solid ${isOn?'rgba(50,205,50,0.3)':'rgba(220,53,69,0.3)'}">${isOn?t('key_status_active','Active'):t('key_status_inactive','Inactive')}</span></div><div style="font-size:0.85rem;color:rgba(255,255,255,0.7)" class="${blur}">${escapeHtml(p.token)}</div></div>`;
+        return `<div class="pool-card"><div class="pool-header"><div class="pool-name">${escapeHtml(p.name)}</div><span class="badge rounded-pill" style="background:${isOn?'rgba(50,205,50,0.2)':'rgba(220,53,69,0.2)'};color:${isOn?'#32CD32':'#dc3545'};font-size:0.7rem;font-weight:600;border:1px solid ${isOn?'rgba(50,205,50,0.3)':'rgba(220,53,69,0.3)'}">${isOn?'Active':'Inactive'}</span></div><div style="font-size:0.85rem;color:rgba(255,255,255,0.7)">${escapeHtml(p.token)}</div></div>`;
       }).join('');
     }
 
-    function scrambleUserId(id) {
-      const arr = id.split('');
-      for (let i = arr.length - 1; i > 0; i--) {
-        const j = (Math.random() * (i + 1)) | 0;
-        [arr[i], arr[j]] = [arr[j], arr[i]];
-      }
-      return arr.join('');
-    }
     function renderModels() {
       const container = document.getElementById('modelsContainer');
       const badge = document.getElementById('modelCountBadge');
       if (!enabledModels.length) {
         badge.textContent = '0';
-        container.innerHTML = '<div class="text-center py-3"><i class="bi bi-info-circle" style="font-size:24px;color:rgba(255,255,255,0.4)"></i><p class="mt-2 text-muted">' + escapeHtml(t('models_none','No enabled models. Add model IDs to ENABLED_MODELS in .config/config.json.')) + '</p></div>';
+        container.innerHTML = '<div class="text-center py-3"><i class="bi bi-info-circle" style="font-size:24px;color:rgba(255,255,255,0.4)"></i><p class="mt-2 text-muted">' + escapeHtml('No enabled models. Add model IDs to ENABLED_MODELS in .config/config.json.') + '</p></div>';
         return;
       }
       const enabledCount = enabledModels.filter(m => !disabledModels.has(m)).length;
@@ -696,8 +528,8 @@
           body: JSON.stringify({ disabledModels: Array.from(disabledModels) })
         });
         const d = await r.json();
-        if (!d.success) showToast(t('toast_failed_prefix','Failed:') + ' ' + (d.error||''), 'danger');
-      } catch { showToast(t('toast_failed_prefix','Failed:'), 'danger'); }
+        if (!d.success) showToast('Failed:' + ' ' + (d.error||''), 'danger');
+      } catch { showToast('Failed:', 'danger'); }
     }
 
     async function fetchUmansUserStatus() {
@@ -717,7 +549,7 @@
         document.getElementById('concLimit').textContent = limit.toString();
         const pct = limit > 0 ? Math.min(100, (concurrent / limit) * 100) : 0;
         document.getElementById('concurrencyProgressBar').style.width = pct + '%';
-        document.getElementById('concUsageText').textContent = concurrent + ' of ' + limit + ' ' + t('label_sessions','sessions');
+        document.getElementById('concUsageText').textContent = concurrent + ' of ' + limit + ' ' + 'sessions';
         document.getElementById('concPctText').textContent = pct.toFixed(0) + '%';
         // Color shift: green -> yellow -> red based on usage
         const bar = document.getElementById('concurrencyProgressBar');
@@ -736,8 +568,7 @@
         const details = [];
         if (d.user_id) {
           umansUserId = d.user_id;
-          const displayUid = blurTokensEnabled ? scrambleUserId(d.user_id) : d.user_id;
-          details.push({ label: 'User ID', value: displayUid, blur: blurTokensEnabled });
+          details.push({ label: 'User ID', value: d.user_id, masked: true });
         }
         if (active !== concurrent) {
           details.push({ label: 'Concurrent', value: concurrent.toString() });
@@ -750,7 +581,7 @@
           details.push({ label: 'Available', value: remaining.toString() });
         }
         detailGrid.innerHTML = details.map(d =>
-          `<div class="col-${details.length <= 2 ? '6' : '4'}"><div class="usage-detail-item"><div class="usage-detail-label">${escapeHtml(d.label)}</div><div class="usage-detail-value" style="color:${d.warn?'#fbbf24':'#fff'}${d.blur?'':';font-variant-numeric:tabular-nums'}">${d.blur?`<span class="token-blurred">${escapeHtml(d.value)}</span>`:escapeHtml(d.value)}</div></div></div>`
+          `<div class="col-${details.length <= 2 ? '6' : '4'}"><div class="usage-detail-item"><div class="usage-detail-label">${escapeHtml(d.label)}</div><div class="usage-detail-value" style="color:${d.warn?'#fbbf24':'#fff'}${d.masked?'':';font-variant-numeric:tabular-nums'}">${d.masked?`<span class="masked-userid" data-userid="${escapeHtml(d.value)}" onclick="this.classList.toggle('revealed');this.textContent=this.classList.contains('revealed')?this.dataset.userid:'${'•'.repeat(Math.min(d.value.length, 12))}'" style="cursor:pointer">${'•'.repeat(Math.min(d.value.length, 12))}</span>`:escapeHtml(d.value)}</div></div></div>`
         ).join('');
       } catch {
         // Leave defaults (--)
@@ -762,23 +593,23 @@
         await Promise.all([fetchUmansUserStatus(), fetchConcurrency()]);
         const kr=await fetch('/api/keys'),kd=await kr.json(); editingIdx=-1; renderKeysList(kd.keys||[]);
         new bootstrap.Modal(document.getElementById('keysModal')).show();
-      } catch(e) { showToast(t('toast_failed_load_keys','Failed to load keys'),'danger'); }
+      } catch(e) { showToast('Failed to load keys','danger'); }
     }
     function copyUserId() {
       if (umansUserId) {
-        navigator.clipboard.writeText(umansUserId).then(() => showToast(t('toast_user_id_copied','User ID copied'),'success')).catch(() => showToast(t('toast_copy_failed','Copy failed'),'danger'));
+        navigator.clipboard.writeText(umansUserId).then(() => showToast('User ID copied','success')).catch(() => showToast('Copy failed','danger'));
       }
     }
     function renderKeysList(keys) {
-      const container = document.getElementById('keysList'), blur = blurTokensEnabled?'token-blurred':'';
+      const container = document.getElementById('keysList');
       const real=keys.filter(k=>k.key);
-      const displayUserId = (umansUserId && blurTokensEnabled) ? scrambleUserId(umansUserId) : umansUserId;
+      const displayUserId = umansUserId;
       const userIdRow = umansUserId ? `<div class="mt-1 d-flex align-items-center gap-2" style="font-size:0.7rem;color:rgba(255,255,255,0.55)">
-          <span><i class="bi bi-person-badge me-1"></i>${escapeHtml(t('label_user_id','User ID'))}:</span>
-          <code class="${blur}" style="font-size:0.7rem;color:rgba(255,255,255,0.85);background:rgba(255,255,255,0.05);padding:1px 4px;border-radius:4px;word-break:break-all">${escapeHtml(displayUserId)}</code>
-          <button class="btn btn-sm p-0 ms-auto" style="background:transparent;border:none;color:rgba(255,255,255,0.5);font-size:0.65rem" onclick="copyUserId()" title="${escapeHtml(t('toast_user_id_copied','User ID copied'))}"><i class="bi bi-clipboard"></i></button>
+          <span><i class="bi bi-person-badge me-1"></i>${escapeHtml('User ID')}:</span>
+          <code class="masked-userid" data-userid="${escapeHtml(displayUserId)}" onclick="this.classList.toggle('revealed');this.textContent=this.classList.contains('revealed')?this.dataset.userid:'${'•'.repeat(Math.min(displayUserId.length, 12))}'" style="font-size:0.7rem;color:rgba(255,255,255,0.85);background:rgba(255,255,255,0.05);padding:1px 4px;border-radius:4px;word-break:break-all;cursor:pointer">${'•'.repeat(Math.min(displayUserId.length, 12))}</code>
+          <button class="btn btn-sm p-0 ms-auto" style="background:transparent;border:none;color:rgba(255,255,255,0.5);font-size:0.65rem" onclick="copyUserId()" title="${escapeHtml('User ID copied')}"><i class="bi bi-clipboard"></i></button>
         </div>` : '';
-      const accountHtml = `<div style="font-size:10px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px">${escapeHtml(t('label_account','Account'))}:</div>
+      const accountHtml = `<div style="font-size:10px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px">${escapeHtml('Account')}:</div>
         <div class="mb-2 p-2" style="background:rgba(255,255,255,0.04);border-radius:8px;border:1px solid rgba(255,255,255,0.1);font-size:0.8rem">
           <div class="d-flex justify-content-between align-items-center">
             <span style="color:rgba(255,255,255,0.7)"><i class="bi bi-person-circle me-1"></i>API key</span>
@@ -787,22 +618,22 @@
         </div>`;
       let keysHtml = '';
       if (real.length) {
-        keysHtml = '<div class="mt-2" style="font-size:10px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px">' + escapeHtml(t('label_keys','Keys')) + ':</div>' +
+        keysHtml = '<div class="mt-2" style="font-size:10px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px">' + escapeHtml('Keys') + ':</div>' +
         real.map((k,i)=>{
           const oi = keys.indexOf(k);
-          if(editingIdx===oi) return `<div class="pool-card"><div class="mb-2"><label class="form-label" style="font-size:10px">${escapeHtml(t('label_name','Name'))}</label><input type="text" class="form-control form-control-sm" id="editKeyName" value="${escapeHtml(k.name||'')}"></div><div class="mb-2"><label class="form-label" style="font-size:10px">${escapeHtml(t('label_key','Key'))}</label><input type="text" class="form-control form-control-sm" id="editKey" value="${escapeHtml(k.key||'')}"></div><div class="d-flex gap-2"><button class="btn btn-sm btn-success" onclick="saveEditKey(${oi})"><i class="bi bi-check me-1"></i>${escapeHtml(t('btn_save','Save'))}</button><button class="btn btn-sm btn-secondary" onclick="cancelEditKey()">${escapeHtml(t('btn_cancel','Cancel'))}</button></div></div>`;
+          if(editingIdx===oi) return `<div class="pool-card"><div class="mb-2"><label class="form-label" style="font-size:10px">${escapeHtml('Name')}</label><input type="text" class="form-control form-control-sm" id="editKeyName" value="${escapeHtml(k.name||'')}"></div><div class="mb-2"><label class="form-label" style="font-size:10px">${escapeHtml('Key')}</label><input type="text" class="form-control form-control-sm" id="editKey" value="${escapeHtml(k.key||'')}"></div><div class="d-flex gap-2"><button class="btn btn-sm btn-success" onclick="saveEditKey(${oi})"><i class="bi bi-check me-1"></i>${escapeHtml('Save')}</button><button class="btn btn-sm btn-secondary" onclick="cancelEditKey()">${escapeHtml('Cancel')}</button></div></div>`;
           const mk = escapeHtml(k.key.substring(0,4)+'...'+k.key.substring(k.key.length-4));
-          return `<div class="pool-card"><div class="pool-header"><div class="pool-name">${escapeHtml(k.name||t('label_name','Unnamed'))}</div><div><button class="btn btn-sm btn-outline-action me-1" onclick="startEditKey(${oi})" title="${escapeHtml(t('btn_edit','Edit'))}"><i class="bi bi-pencil"></i></button><button class="btn btn-sm" style="background:rgba(220,53,69,0.2);color:#dc3545;border:none" onclick="deleteKey(${oi})" title="${escapeHtml(t('btn_delete','Delete'))}"><i class="bi bi-trash"></i></button></div></div><div style="font-size:0.8rem;color:rgba(255,255,255,0.7)"><span class="${blur}" title="${escapeHtml(k.key)}">${mk}</span></div></div>`;
+          return `<div class="pool-card"><div class="pool-header"><div class="pool-name">${escapeHtml(k.name||'Unnamed')}</div><div><button class="btn btn-sm btn-outline-action me-1" onclick="startEditKey(${oi})" title="${escapeHtml('Edit')}"><i class="bi bi-pencil"></i></button><button class="btn btn-sm" style="background:rgba(220,53,69,0.2);color:#dc3545;border:none" onclick="deleteKey(${oi})" title="${escapeHtml('Delete')}"><i class="bi bi-trash"></i></button></div></div><div style="font-size:0.8rem;color:rgba(255,255,255,0.7)"><span title="${escapeHtml(k.key)}">${mk}</span></div></div>`;
         }).join('');
-      } else { keysHtml = '<p class="text-muted text-center py-3">' + escapeHtml(t('account_none','No API keys configured.')) + '</p>'; }
+      } else { keysHtml = '<p class="text-muted text-center py-3">' + escapeHtml('No API keys configured.') + '</p>'; }
       container.innerHTML = accountHtml + keysHtml;
     }
     function refreshKeysList() { return fetch('/api/keys').then(r=>r.json()).then(d=>renderKeysList(d.keys||[])).catch(()=>{}); }
     function startEditKey(i) { editingIdx=i; refreshKeysList(); }
     function cancelEditKey() { editingIdx=-1; refreshKeysList(); }
-    async function saveEditKey(i) { const n=document.getElementById('editKeyName').value.trim(),k=document.getElementById('editKey').value.trim(); try{const r=await fetch('/api/keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update',index:i,name:n,key:k})});const d=await r.json();if(d.success){editingIdx=-1;showToast(t('toast_key_updated','Key updated'));loadConfig();}else showToast(t('toast_failed_prefix','Failed:') + ' ' + d.error,'danger');}catch{showToast(t('toast_failed_prefix','Failed:'),'danger');} }
-    async function deleteKey(i) { try{const r=await fetch('/api/keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'delete',index:i})});const d=await r.json();if(d.success){showToast(t('toast_key_deleted','Key deleted'));loadConfig();}else showToast(t('toast_failed_prefix','Failed:') + ' ' + d.error,'danger');}catch{showToast(t('toast_failed_prefix','Failed:'),'danger');} }
-    async function addKey() { const n=document.getElementById('newKeyName').value.trim()||(t('label_key','Key') + ' '+(document.querySelectorAll('#keysList .pool-card').length+1)),k=document.getElementById('newKey').value.trim(); if(!k){showToast(t('toast_key_required','Key required'),'warning');return;} try{const r=await fetch('/api/keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'add',name:n,key:k})});const d=await r.json();if(d.success){document.getElementById('newKeyName').value='';document.getElementById('newKey').value='';showToast(t('toast_key_added','Key added'));loadConfig();}else showToast(t('toast_failed_prefix','Failed:') + ' ' + d.error,'danger');}catch{showToast(t('toast_failed_prefix','Failed:'),'danger');} }
+    async function saveEditKey(i) { const n=document.getElementById('editKeyName').value.trim(),k=document.getElementById('editKey').value.trim(); try{const r=await fetch('/api/keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update',index:i,name:n,key:k})});const d=await r.json();if(d.success){editingIdx=-1;showToast('Key updated');loadConfig();}else showToast('Failed:' + ' ' + d.error,'danger');}catch{showToast('Failed:','danger');} }
+    async function deleteKey(i) { try{const r=await fetch('/api/keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'delete',index:i})});const d=await r.json();if(d.success){showToast('Key deleted');loadConfig();}else showToast('Failed:' + ' ' + d.error,'danger');}catch{showToast('Failed:','danger');} }
+    async function addKey() { const n=document.getElementById('newKeyName').value.trim()||('Key' + ' '+(document.querySelectorAll('#keysList .pool-card').length+1)),k=document.getElementById('newKey').value.trim(); if(!k){showToast('Key required','warning');return;} try{const r=await fetch('/api/keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'add',name:n,key:k})});const d=await r.json();if(d.success){document.getElementById('newKeyName').value='';document.getElementById('newKey').value='';showToast('Key added');loadConfig();}else showToast('Failed:' + ' ' + d.error,'danger');}catch{showToast('Failed:','danger');} }
 
     async function loadConfig() {
       try {
@@ -816,7 +647,14 @@
         if(cd) {
           if (cd.freegenPrompt) { const fp = document.getElementById('freegenPromptInput'); if (fp) fp.value = cd.freegenPrompt; }
           if (cd.wallpaperSource && cd.wallpaperSource !== 'none') {
-            await setWallpaper(cd.wallpaperSource);
+            setWallpaperActive(cd.wallpaperSource);
+            updateFreegenPromptVisibility(cd.wallpaperSource);
+            const computedBg = getComputedStyle(document.body).backgroundImage;
+            if (!computedBg || computedBg === 'none') {
+              await setWallpaper(cd.wallpaperSource);
+            } else {
+              document.body.classList.add('has-wallpaper');
+            }
           } else {
             setWallpaperActive('none');
           }
@@ -829,10 +667,10 @@
             pollSleevStatus();
           }
         }
-        renderModels(); renderTokenPools(); updateSsModeStatus(); updateStats(); await fetchUsage();
+        renderModels(); renderTokenPools(); updateStats(); await fetchUsage();
         setTimeout(initLiquidGlass, 50);
         setTimeout(()=>window.dispatchEvent(new Event('resize')),500);
-      } catch(e) { showToast(t('toast_failed_load_config','Failed to load configuration'),'danger'); }
+      } catch(e) { showToast('Failed to load configuration','danger'); }
     }
 
     async function fetchUsage() {
@@ -852,7 +690,7 @@
         document.getElementById('totalTokens').textContent = winTokens.toLocaleString();
         document.getElementById('cachedPct').textContent = cachedPct + '%';
         const labelEl = document.getElementById('totalTokensLabel');
-        if (labelEl) { labelEl.textContent = t('label_tokens','Tokens'); }
+        if (labelEl) { labelEl.textContent = 'Tokens'; }
         if (plan.display_name) {
           document.getElementById('planBadge').textContent = plan.display_name;
           document.getElementById('planBadge').style.display = '';
@@ -910,38 +748,38 @@
     }
 
     async function checkHealth() {
-      try{const r=await fetch('/healthz');const d=await r.json();if(d.ok){proxyData=d;document.getElementById('statusIndicator').className='status-indicator status-online';document.getElementById('statusText').textContent=t('status_online','Online');renderTokenPools();updateStats();showToast(t('toast_health_ok','Health OK'));}else throw Error();}catch{document.getElementById('statusIndicator').className='status-indicator status-offline';document.getElementById('statusText').textContent=t('status_offline','Offline');showToast(t('toast_health_failed','Health check failed'),'danger');}
+      try{const r=await fetch('/healthz');const d=await r.json();if(d.ok){proxyData=d;document.getElementById('statusIndicator').className='status-indicator status-online';document.getElementById('statusText').textContent='Online';renderTokenPools();updateStats();showToast('Health OK');}else throw Error();}catch{document.getElementById('statusIndicator').className='status-indicator status-offline';document.getElementById('statusText').textContent='Offline';showToast('Health check failed','danger');}
     }
     async function testConnection() {
-      try{const r=await fetch('/v1/models');if(r.ok){const d=await r.json();showToast(t('toast_connected','Connected! {n} models').replace('{n}', d.data?.length||0));}else throw Error();}catch{showToast(t('toast_connection_failed','Connection test failed'),'danger');}
+      try{const r=await fetch('/v1/models');if(r.ok){const d=await r.json();showToast('Connected! {n} models'.replace('{n}', d.data?.length||0));}else throw Error();}catch{showToast('Connection test failed','danger');}
     }
     function updateStatus() {
-      fetch('/healthz').then(r=>r.json()).then(d=>{proxyData=d;document.getElementById('statusIndicator').className=d.ok?'status-indicator status-online':'status-indicator status-offline';document.getElementById('statusText').textContent=d.ok?t('status_online','Online'):t('status_offline','Offline');renderTokenPools();updateStats();}).catch(()=>{document.getElementById('statusIndicator').className='status-indicator status-offline';document.getElementById('statusText').textContent=t('status_offline','Offline');});
+      fetch('/healthz').then(r=>r.json()).then(d=>{proxyData=d;document.getElementById('statusIndicator').className=d.ok?'status-indicator status-online':'status-indicator status-offline';document.getElementById('statusText').textContent=d.ok?'Online':'Offline';renderTokenPools();updateStats();}).catch(()=>{document.getElementById('statusIndicator').className='status-indicator status-offline';document.getElementById('statusText').textContent='Offline';});
     }
 
     function restartProxy() {
-      if (!confirm(t('restart_confirm','Restart the proxy?'))) return;
+      if (!confirm('Restart the proxy?')) return;
       const btn = document.getElementById('restartBtn');
-      btn.disabled = true; btn.innerHTML = '<i class="bi bi-arrow-counterclockwise me-2"></i>' + t('restart_waiting','Restarting...');
+      btn.disabled = true; btn.innerHTML = '<i class="bi bi-arrow-counterclockwise me-2"></i>' + 'Restarting...';
       document.getElementById('statusIndicator').className = 'status-indicator status-reconnecting';
-      document.getElementById('statusText').textContent = t('status_reconnecting','Reconnecting...');
-      fetch('/api/restart', { method: 'POST' }).then(r => r.json()).then(d => showToast(d.message || t('restart_waiting','Restarting...'))).catch(() => {});
+      document.getElementById('statusText').textContent = 'Reconnecting...';
+      fetch('/api/restart', { method: 'POST' }).then(r => r.json()).then(d => showToast(d.message || 'Restarting...')).catch(() => {});
       let attempts = 0;
       const iv = setInterval(() => {
         attempts++;
         if (attempts >= 30) {
           document.getElementById('statusIndicator').className = 'status-indicator status-offline';
-          document.getElementById('statusText').textContent = t('status_offline','Offline');
-          btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-counterclockwise me-2"></i>' + t('btn_restart_proxy','Restart Proxy');
-          showToast(t('restart_timeout','Proxy did not come back'), 'danger'); clearInterval(iv);
+          document.getElementById('statusText').textContent = 'Offline';
+          btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-counterclockwise me-2"></i>' + 'Restart Proxy';
+          showToast('Proxy did not come back', 'danger'); clearInterval(iv);
           return;
         }
         fetch('/healthz').then(r => r.json()).then(d => {
           if (d.ok) {
             document.getElementById('statusIndicator').className = 'status-indicator status-online';
-            document.getElementById('statusText').textContent = t('status_online','Online');
-            btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-counterclockwise me-2"></i>' + t('btn_restart_proxy','Restart Proxy');
-            showToast(t('restart_back_online','Proxy is back online!'), 'success'); clearInterval(iv);
+            document.getElementById('statusText').textContent = 'Online';
+            btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-counterclockwise me-2"></i>' + 'Restart Proxy';
+            showToast('Proxy is back online!', 'success'); clearInterval(iv);
           }
         }).catch(() => {});
       }, 2000);
@@ -951,35 +789,7 @@
     window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(initLiquidGlass, 150); });
 
     document.addEventListener('DOMContentLoaded', async () => {
-      bindTranslateCancel();
       hideDashboardUntilWallpaper();
-      const cfg = await fetchI18nConfig();
-      _hasApiKey = !!cfg.has_key;
-      const forcedLocale = cfg.forced_locale || null;
-      const cb = document.getElementById('autotranslateCheckbox');
-      if (!_hasApiKey || !cb) {
-        window.__i18n = {}; // English fallback
-      } else if (forcedLocale && forcedLocale !== 'en') {
-        cb.checked = true;
-        cb.disabled = true;
-        const label = cb.closest('label');
-        if (label && !label.querySelector('.forced-hint')) {
-          const hint = document.createElement('span');
-          hint.className = 'forced-hint';
-          hint.textContent = t('forced_locale_hint','(forced: {locale})').replace('{locale}', forcedLocale);
-          label.appendChild(hint);
-        }
-        cb.addEventListener('click', function(e) { e.preventDefault(); });
-        setTimeout(() => enableAutotranslate(forcedLocale), 50);
-      } else {
-        const stored = localStorage.getItem('preferredLocale');
-        if (stored) cb.checked = true;
-        cb.addEventListener('change', function() {
-          if (cb.checked) enableAutotranslate();
-          else disableAutotranslate();
-        });
-        if (stored) setTimeout(() => enableAutotranslate(), 50);
-      }
       loadConfig().then(() => {
         const loader = document.getElementById('wallpaperLoader');
         if (loader) loader.style.display = 'none';
@@ -1000,7 +810,7 @@
       if (document.getElementById('wallpaperLoader')) return;
       const loader = document.createElement('div');
       loader.id = 'wallpaperLoader';
-      loader.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#0d1117;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;color:rgba(255,255,255,0.8);transition:opacity 0.4s ease';
+      loader.style.cssText = 'position:fixed;inset:0;z-index:99999;background:transparent;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;color:rgba(255,255,255,0.8);transition:opacity 0.4s ease';
       loader.innerHTML = '<div class=\"spinner-border text-light\" role=\"status\"></div><div style=\"font-size:14px;letter-spacing:0.5px\">Loading dashboard...</div>';
       document.body.appendChild(loader);
     }
