@@ -97,7 +97,7 @@ Models whose `capabilities.supports_vision === "via-handoff"` (e.g. `umans-glm-5
 1. `needsVisionHandoff(resolvedModel)` (line 1154) — checks `modelInfoMap` for `via-handoff` flag.
 2. `collectImageParts(payload)` (line 1173) — walks `payload.system` and `payload.messages`, collecting image parts in both OpenAI (`image_url`) and Anthropic (`image` with `source.base64`/`source.url`) formats.
 3. `analyzeImageViaHandoff(dataUri, slot, ...)` (line 1219) — makes a non-streaming `chatCompletions` call to the handoff model (default `umans-kimi-k2.7`) with a system analysis prompt + the image.
-4. `performVisionHandoff(payload, resolvedModel, ...)` (line 1270) — replaces each image part in-place with a `{type: "text", text: "[User pasted image]\n<description>"}` block.
+4. `performVisionHandoff(payload, resolvedModel, ...)` (line 1270) — replaces each image part in-place with a `{type: "text", text: "[Image content — analyzed by vision module, shown as text because the active model cannot see images:]\n<description>"}` block. The label makes clear to the primary model that the text is authoritative image content, not user commentary.
 
 **Config keys**: `VISION_HANDOFF_ENABLED` (default `true`), `VISION_HANDOFF_MODEL` (default `umans-kimi-k2.7`), `VISION_HANDOFF_PROMPT` (default built-in analysis prompt when empty).
 
@@ -186,9 +186,11 @@ Normalizes JSON Schema in tools to handle `$ref`, `$defs`, `definitions`, nullab
 - `processQueue()` (line 2263) — Dequeues from `requestQueue` while `activeRequests < limit`. Dispatches to `proxyAnthropicRequest` or `proxyChatRequest` based on `format`.
 - `handleChatCompletions` (line 2281) — Parses body, checks queue overflow (`MAX_QUEUE_SIZE`), queues or executes via `proxyChatRequest`
 - `handleAnthropicMessages` (line 2390) — Entry point for `/v1/messages`; applies image cap, queues or executes via `proxyAnthropicRequest`
-- `proxyChatRequest` (line 2436) — Full proxy pipeline: key acquire → session label → reasoning strip → image-attachment limit (`limitImagesInMessages`) → cache check → model resolve → tool normalize → reasoning caps → rate limit → **retry-wrapped upstream call** (see Retry Logic) → shell-tool guard → stream/non-stream response. The full request body of the first request in a new session is logged to the console. HTTP errors are logged to `.logs/` via `logHttpError`.
+- `proxyChatRequest` (line 2436) — Full proxy pipeline: key acquire → session label → reasoning strip → image-attachment limit (`limitImagesInMessages`, skips handoff models) → cache check → model resolve → tool normalize → reasoning caps → `normalizeThinkingPayload` (camelCase → snake_case) → SSE keepalive flush (if vision handoff will run on a streaming request) → vision handoff → rate limit → **retry-wrapped upstream call** (see Retry Logic) → shell-tool guard → stream/non-stream response. The full request body of the first request in a new session is logged to the console. HTTP errors are logged to `.logs/` via `logHttpError`.
+- `normalizeThinkingPayload(payload)` — Rewrites camelCase `budgetTokens` back to snake_case `budget_tokens` for UMANS Pydantic compatibility. The `@ai-sdk/openai-compatible` provider camelCases snake_case keys from opencode.json, but the upstream rejects camelCase. Applied on both OpenAI and Anthropic paths.
+- **SSE keepalive during vision handoff** — When a streaming request will trigger vision handoff, the proxy flushes SSE headers + a keepalive comment before the handoff runs. This prevents client timeouts and duplicate sessions from retries while the handoff makes its multi-second round-trip. `writeJSON` detects `headersSent` and emits errors as SSE events instead of crashing.
   - **SSE streaming path (two modes)**: When `SHELL_TOOL_GUARD` is **enabled**, the upstream SSE stream is fully buffered (with client-disconnect detection — the upstream body is destroyed if the client closes mid-stream), then sanitized via `sanitizeSseResponse()` and sent as a single response. When **disabled**, the SSE stream is piped directly to the client via `pipeBodyToResponse()` for real-time streaming.
-- `proxyAnthropicRequest` (line 2301) — Anthropic pass-through: key acquire → session label → model resolve → vision handoff → upstream `messages()` call → `await pipeBodyToResponse()` → key health marking.
+- `proxyAnthropicRequest` (line 2301) — Anthropic pass-through: key acquire → session label → model resolve → `normalizeThinkingPayload` → vision handoff → upstream `messages()` call → `await pipeBodyToResponse()` → key health marking.
 - `validateApiKey()` (line 2631) — Calls `getUserInfo()`, populates `userInfoCache` + `modelDisplayNameMap` + `modelInfoMap`, returns boolean
 
 ### 12. Request Router (proxy.js:2645-3052)
@@ -205,9 +207,7 @@ Normalizes JSON Schema in tools to handle `$ref`, `$defs`, `definitions`, nullab
 | `/api/keys` | GET/POST | Multi-key CRUD (add/update/delete). Persists `KEYS` array to config. |
 | `/api/cache` | GET/DELETE | Cache stats/clear |
 | `/api/umans/usage` | GET | UMANS usage data (proxied from upstream `/usage` with 5-min cache; `?fresh=1` bypasses cache) |
-| `/api/umans/usage-history` | GET | Usage history (currently returns empty buckets) |
 | `/api/umans/concurrency` | GET | Concurrent sessions, limit, hard_cap, active count, queue depth, user_id (`?fresh=1` bypasses cache) |
-| `/api/umans/user` | GET | Stub: returns `{ loggedIn: true, email: '' }` (login/logout endpoints removed) |
 | `/api/sleev` | GET/POST | Get Sleev gateway status / toggle Sleev on/off |
 | `/api/restart` | POST | Triggers `process.exit(42)` after 500ms (server.close + graceful shutdown) |
 | `/healthz` | GET | Health check (includes sleev status) |
@@ -230,7 +230,7 @@ Normalizes JSON Schema in tools to handle `$ref`, `$defs`, `definitions`, nullab
 - `fetchConcurrency(fresh = false)` (line 979) — Extracts `usage.concurrent_sessions`, `limits.concurrency.limit`, `limits.concurrency.hard_cap`, and `user_id` from cached usage data. Passes `fresh` through to `fetchUsage`.
 - `getEffectiveConcurrency()` (line 990) — Returns `{ concurrent, limit, hard_cap, overridden, user_id }`. The proxy gates on `hard_cap ?? limit` (burst capacity) before queueing. If `config.overrideConcurrency > 0`, the effective `hard_cap` is capped to `min(override, apiHardCap)` (or override when the API hard_cap is unknown).
 - `bumpThrottled()` (line 956) — Increments `throttledCount`; called when the concurrency queue is full and a 503 is returned to the client.
-- **Note**: `loginToApp()`, `EMAIL`, `PASSWORD`, and `APP_BASE` have been removed. The `/api/umans/login` and `/api/umans/logout` endpoints no longer exist. `/api/umans/user` is a stub returning `{ loggedIn: true, email: '' }`.
+- **Note**: `loginToApp()`, `EMAIL`, `PASSWORD`, and `APP_BASE` have been removed. The `/api/umans/login` and `/api/umans/logout` endpoints no longer exist.
 
 ### 15. Dashboard (dashboard.html, ~881 lines)
 
@@ -284,29 +284,6 @@ The dashboard derives:
 - `Start Time = window.started_at`
 - `Tokens In = usage.tokens_in`
 - `Tokens Out = usage.tokens_out`
-
-#### `/api/umans/usage-history` response shape
-
-Currently returns empty buckets (`{ history: { buckets: [] } }`). The 90-day usage history table has been removed from the dashboard.
-
-#### Window Token Estimation Workaround
-
-UMANS sometimes returns mismatched scopes: `requests_in_window` is window-scoped, but `tokens_in`/`tokens_out` equal the 90-day total. In that case the numbers make no sense together, e.g.:
-
-| | Requests | Tokens |
-|---|---|---|
-| Window | 246 | 35,732,073 |
-| 90-Day | 643 | 35,732,073 |
-
-The dashboard detects this signature (`winReqs > 0 && winReqs < histReqs && winTokens >= histTokens`) and replaces the raw window token value with a proportional estimate derived from the per-day history rows:
-
-1. Sort buckets newest → oldest.
-2. Walk backward, taking full days until the remaining request budget is smaller than the next day.
-3. Prorate the last day by `remainingReqs / day.requests`.
-4. Aggregate tokens, input tokens, and cached tokens the same way.
-5. Change the card label to **“Tokens (est.)”** with a tooltip explaining the fallback.
-
-The estimate assumes requests are spread roughly evenly through a day. It is only applied when the bug is detected; otherwise the dashboard shows the UMANS-supplied numbers verbatim.
 
 ## Startup Sequence
 
