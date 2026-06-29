@@ -2,7 +2,7 @@
 
 OpenAI- and Anthropic-compatible proxy for [UMANS AI](https://code.umans.ai). Zero external dependencies.
 
-<img width="1052" height="909" alt="image" src="https://github.com/user-attachments/assets/55b2360a-bd8a-456d-b756-2842cb1e03cf" />
+![Dashboard](dashboard.png)
 
 ## Features
 

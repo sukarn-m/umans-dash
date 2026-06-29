@@ -37,30 +37,31 @@
     .status-unknown { background-color:var(--secondary-color); }
     .status-reconnecting { background-color:#ffd700; box-shadow:0 0 10px #ffd700; animation:pulse 1s ease-in-out infinite; }
     @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
-    .btn-outline-action { border:1px solid rgba(255,255,255,0.8); color:rgba(255,255,255,0.8); background:transparent; font-size:0.75rem!important; padding:0.25rem 0.5rem!important; display:inline-flex!important; align-items:center; justify-content:center; text-decoration:none!important; transition:all 0.15s ease; }
+    .btn-outline-action { border:1px solid rgba(255,255,255,0.8); color:rgba(255,255,255,0.8); background:transparent; font-size:0.75rem!important; padding:0.5rem 0.75rem!important; display:inline-flex!important; align-items:center; justify-content:center; text-decoration:none!important; transition:all 0.15s ease; }
     #section-actions .btn-outline-action { justify-content:flex-start; text-align:left; }
     .btn-outline-action:hover { background:rgba(255,255,255,0.15); border-color:rgba(255,255,255,0.9)!important; color:#fff!important; outline:0; }
     .btn-outline-action.active { background:rgba(50,205,50,0.2)!important; border-color:rgba(50,205,50,0.8)!important; color:#fff!important; box-shadow:0 0 0 0.15rem rgba(50,205,50,0.25)!important; }
     .stats-value { font-size:28px; font-weight:700; color:white; text-shadow:0 0 12px rgba(102,126,234,0.3); }
-    .stats-label { font-size:11px; color:rgba(255,255,255,0.7); text-transform:uppercase; letter-spacing:1px; margin-top:4px; }
+    .stats-label { font-size:11px; color:rgba(255,255,255,0.85); text-transform:uppercase; letter-spacing:1px; margin-top:4px; }
     .stat-inline-card { margin-bottom:0 !important; border:1px solid rgba(255,255,255,0.08); }
     .stat-inline-card .card-content { background:rgba(0,0,0,0.12); padding:16px 8px; text-align:center; min-height:78px; display:flex; flex-direction:column; justify-content:center; border-top:3px solid rgba(102,126,234,0.5); transition:background 0.15s ease; }
     .stat-inline-card:hover .card-content { background:rgba(255,255,255,0.05); }
     .usage-detail-item { padding:8px 10px; background:rgba(0,0,0,0.12); border-radius:12px; border:1px solid rgba(255,255,255,0.08); border-top:2px solid rgba(102,126,234,0.35); transition:background 0.15s ease; }
     .usage-detail-item:hover { background:rgba(255,255,255,0.05); }
-    .usage-detail-label { color:rgba(255,255,255,0.55); font-size:0.65rem; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:2px; }
+    .usage-detail-label { color:rgba(255,255,255,0.75); font-size:0.65rem; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:2px; }
     .usage-detail-value { color:#fff; font-weight:600; font-size:0.85rem; font-variant-numeric:tabular-nums; }
     #section-models code { color:#6ea8fe; }
     .toast-container { position:fixed; top:20px; right:20px; z-index:1050; }
-    .form-label { font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:0.5px; color:rgba(255,255,255,0.9); margin-bottom:6px; }
+    .form-label { font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:0.5px; color:rgba(255,255,255,0.8); margin-bottom:6px; }
     .form-control, .form-select { display:block; width:100%; background:rgba(255,255,255,0.15); border:1px solid rgba(255,255,255,0.2); color:white; padding:0.375rem 0.75rem; font-size:1rem; border-radius:0.375rem; }
-    .form-control:focus, .form-select:focus { background:rgba(255,255,255,0.2); border-color:rgba(255,255,255,0.4); color:white; outline:0; box-shadow:0 0 0 0.2rem rgba(102,126,234,0.25); }
+    .form-control:focus, .form-select:focus { background:rgba(255,255,255,0.2); border-color:rgba(255,255,255,0.7); color:white; outline:0; box-shadow:0 0 0 0.2rem rgba(102,126,234,0.25); }
     .form-control::placeholder { color:rgba(255,255,255,0.6); }
     .form-select option { background:#1a1d23; color:white; }
     .text-muted { color:rgba(255,255,255,0.7)!important; }
     h4, h5, strong, .fw-medium { color:white!important; }
     small { color:rgba(255,255,255,0.8)!important; }
     .collapsible-header { cursor:pointer; user-select:none; }
+    .collapsible-header:focus-visible { outline:2px solid rgba(102,126,234,0.6); outline-offset:-2px; }
     .collapsible-header .toggle-icon { transition:transform 0.2s ease; }
     .collapsible-header .toggle-icon.collapsed { transform:rotate(-90deg); }
     .collapse-section { transition:all 0.3s ease; }
@@ -146,12 +147,12 @@
                 </div>
               </div>
               <div class="mt-2">
-                <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.5);margin-bottom:3px">Concurrency Usage</div>
+                <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.75);margin-bottom:3px">Concurrency Usage</div>
                 <div class="d-flex justify-content-between align-items-center mb-1" style="font-size:0.75rem;color:rgba(255,255,255,0.8)">
                   <span id="concUsageText">0 of 0 sessions</span>
                   <span id="concPctText">0%</span>
                 </div>
-                <div style="position:relative;height:10px;background:rgba(255,255,255,0.1);border-radius:4px;overflow:hidden">
+                <div style="position:relative;height:10px;background:rgba(255,255,255,0.1);border-radius:4px;overflow:hidden" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" aria-label="Concurrency usage">
                   <!-- Bottom border: yellow for soft cap zone, orange for burst zone -->
                   <div id="concBottomSoft" style="position:absolute;bottom:0;left:0;height:2px;width:100%;background:#fde047;z-index:2"></div>
                   <div id="concBottomBurst" style="position:absolute;bottom:0;left:100%;height:2px;width:0%;background:#fd7e14;z-index:2"></div>
@@ -176,13 +177,13 @@
         <div class="card" data-glass data-section="quick-settings">
           <div class="glass-panel"></div>
           <div class="card-content">
-            <div class="card-header collapsible-header" onclick="toggleSection('quick-settings')">
+            <div class="card-header collapsible-header" role="button" tabindex="0" aria-expanded="true" onclick="toggleSection('quick-settings')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection('quick-settings')}">
               <i class="bi bi-chevron-down toggle-icon me-1"></i><i class="bi bi-gear-fill me-2"></i><span>Quick Settings</span>
             </div>
             <div class="card-body collapse-section" id="section-quick-settings">
               <div class="mb-2">
-                <label class="form-label" style="font-size:0.7rem;color:rgba(255,255,255,0.5);margin-bottom:2px">Automatic Refresh</label>
-                <div class="btn-group w-100" role="group" id="refreshIntervalGroup">
+                <label class="form-label" style="font-size:0.7rem;color:rgba(255,255,255,0.75);margin-bottom:2px">Automatic Refresh</label>
+                <div class="btn-group w-100" role="group" id="refreshIntervalGroup" aria-label="Automatic refresh interval">
                   <button class="btn btn-outline-action btn-refresh" data-refresh="30" onclick="setRefreshInterval('30')">30s</button>
                   <button class="btn btn-outline-action btn-refresh" data-refresh="60" onclick="setRefreshInterval('60')">1m</button>
                   <button class="btn btn-outline-action btn-refresh" data-refresh="120" onclick="setRefreshInterval('120')">2m</button>
@@ -190,8 +191,8 @@
                 </div>
               </div>
               <div class="mb-2">
-                <label class="form-label" style="font-size:0.7rem;color:rgba(255,255,255,0.5);margin-bottom:2px">Wallpaper</label>
-                <div class="btn-group w-100" role="group" id="wallpaperGroup">
+                <label class="form-label" style="font-size:0.7rem;color:rgba(255,255,255,0.75);margin-bottom:2px">Wallpaper</label>
+                <div class="btn-group w-100" role="group" id="wallpaperGroup" aria-label="Wallpaper source">
                   <button class="btn btn-outline-action btn-wp" data-wp="none" onclick="setWallpaper('none')">None</button>
                   <button class="btn btn-outline-action btn-wp" data-wp="bing" onclick="setWallpaper('bing')">Bing</button>
                   <button class="btn btn-outline-action btn-wp" data-wp="wallhaven" onclick="setWallpaper('wallhaven')">Wallhaven</button>
@@ -199,7 +200,7 @@
                 </div>
               </div>
               <div class="mb-2" id="freegenPromptContainer" style="display:none">
-                <label class="form-label" style="font-size:0.65rem;color:rgba(255,255,255,0.5);margin-bottom:2px">AI (FreeGen) Prompt</label>
+                <label class="form-label" style="font-size:0.65rem;color:rgba(255,255,255,0.75);margin-bottom:2px">AI (FreeGen) Prompt</label>
                 <div class="input-group input-group-sm" style="gap:4px;margin-bottom:4px">
                    <input type="text" class="form-control form-control-sm" id="freegenPromptInput" placeholder="Describe your wallpaper..." style="font-size:0.7rem;background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.2);color:white">
                    <button class="btn btn-outline-action" style="font-size:0.6rem;padding:0.2rem 0.5rem;white-space:nowrap" onclick="useDefaultFreegenPrompt()" title="Load default prompt">Default</button>
@@ -208,26 +209,26 @@
                  <div id="freegenStatus" style="font-size:0.65rem;color:rgba(255,255,255,0.55);min-height:1rem"></div>
               </div>
               <div class="mb-2">
-                <label class="form-label d-flex align-items-center gap-1" style="font-size:0.7rem;color:rgba(255,255,255,0.5);margin-bottom:2px">
+                <label class="form-label d-flex align-items-center gap-1" style="font-size:0.7rem;color:rgba(255,255,255,0.75);margin-bottom:2px">
                   Context Compression
-                  <i class="bi bi-info-circle" style="cursor:help;color:rgba(255,255,255,0.4)" data-bs-toggle="tooltip" data-bs-html="true" title="Routes requests through Sleev, which compresses conversation context before forwarding to UMANS. Reduces token usage but adds latency. Requires the Sleev binary installed and a Sleev account."></i>
+                  <i class="bi bi-info-circle" style="cursor:help;color:rgba(255,255,255,0.7)" data-bs-toggle="tooltip" data-bs-html="true" title="Routes requests through Sleev, which compresses conversation context before forwarding to UMANS. Reduces token usage but adds latency. Requires the Sleev binary installed and a Sleev account."></i>
                 </label>
-                <div class="btn-group w-100" role="group" id="sleevGroup">
+                <div class="btn-group w-100" role="group" id="sleevGroup" aria-label="Context compression">
                   <button class="btn btn-outline-action btn-sleev" data-sleev="off" onclick="toggleSleev(false)">Off</button>
                   <button class="btn btn-outline-action btn-sleev" data-sleev="on" onclick="toggleSleev(true)">On</button>
                 </div>
-                <div id="sleevStatus" style="font-size:0.6rem;color:rgba(255,255,255,0.5);min-height:0.8rem;margin-top:2px"></div>
+                <div id="sleevStatus" style="font-size:0.6rem;color:rgba(255,255,255,0.75);min-height:0.8rem;margin-top:2px"></div>
               </div>
               <div class="mb-2">
-                <label class="form-label d-flex align-items-center gap-1" style="font-size:0.7rem;color:rgba(255,255,255,0.5);margin-bottom:2px">
+                <label class="form-label d-flex align-items-center gap-1" style="font-size:0.7rem;color:rgba(255,255,255,0.75);margin-bottom:2px">
                   Git Guard
-                  <i class="bi bi-info-circle" style="cursor:help;color:rgba(255,255,255,0.4)" data-bs-toggle="tooltip" data-bs-html="true" title="Blocks git commands in LLM tool_call responses by rewriting them to a harmless echo. Enabling this disables real-time streaming on the OpenAI endpoint — the full response is buffered before sending to the client."></i>
+                  <i class="bi bi-info-circle" style="cursor:help;color:rgba(255,255,255,0.7)" data-bs-toggle="tooltip" data-bs-html="true" title="Blocks git commands in LLM tool_call responses by rewriting them to a harmless echo. Enabling this disables real-time streaming on the OpenAI endpoint — the full response is buffered before sending to the client."></i>
                 </label>
-                <div class="btn-group w-100" role="group" id="gitGuardGroup">
+                <div class="btn-group w-100" role="group" id="gitGuardGroup" aria-label="Git guard">
                   <button class="btn btn-outline-action btn-gitguard" data-gitguard="off" onclick="toggleGitGuard(false)">Off</button>
                   <button class="btn btn-outline-action btn-gitguard" data-gitguard="on" onclick="toggleGitGuard(true)">On</button>
                 </div>
-                <div id="gitGuardStatus" style="font-size:0.6rem;color:rgba(255,255,255,0.5);min-height:0.8rem;margin-top:2px"></div>
+                <div id="gitGuardStatus" style="font-size:0.6rem;color:rgba(255,255,255,0.75);min-height:0.8rem;margin-top:2px"></div>
               </div>
             </div>
           </div>
@@ -236,7 +237,7 @@
         <div class="card" data-glass data-section="actions">
           <div class="glass-panel"></div>
           <div class="card-content">
-            <div class="card-header collapsible-header" onclick="toggleSection('actions')">
+            <div class="card-header collapsible-header" role="button" tabindex="0" aria-expanded="false" onclick="toggleSection('actions')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection('actions')}">
               <i class="bi bi-chevron-down toggle-icon collapsed me-1"></i><i class="bi bi-lightning-charge-fill me-2"></i><span>Quick Actions</span>
             </div>
             <div class="card-body collapse-section collapsed" id="section-actions">
@@ -253,7 +254,7 @@
         <div class="card" data-glass data-section="tokens">
           <div class="glass-panel"></div>
           <div class="card-content">
-            <div class="card-header collapsible-header d-flex justify-content-between align-items-center" onclick="toggleSection('tokens')">
+            <div class="card-header collapsible-header d-flex justify-content-between align-items-center" role="button" tabindex="0" aria-expanded="false" onclick="toggleSection('tokens')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection('tokens')}">
               <span><i class="bi bi-chevron-down toggle-icon collapsed me-1"></i><i class="bi bi-key-fill me-2"></i><span>API Key</span></span>
               <span class="d-flex align-items-stretch gap-2" style="height:100%">
                 <span class="badge bg-secondary d-flex align-items-center" id="tokenCountBadge" onclick="event.stopPropagation()">0</span>
@@ -267,7 +268,7 @@
         <div class="card" data-glass data-section="models">
           <div class="glass-panel"></div>
           <div class="card-content">
-            <div class="card-header collapsible-header d-flex justify-content-between align-items-center" onclick="toggleSection('models')">
+            <div class="card-header collapsible-header d-flex justify-content-between align-items-center" role="button" tabindex="0" aria-expanded="false" onclick="toggleSection('models')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection('models')}">
               <span><i class="bi bi-chevron-down toggle-icon collapsed me-1"></i><i class="bi bi-cpu-fill me-2"></i><span>Models</span></span>
               <span class="badge bg-secondary" id="modelCountBadge">0</span>
             </div>
@@ -281,7 +282,7 @@
         <div class="card" data-glass data-section="env">
           <div class="glass-panel"></div>
           <div class="card-content">
-            <div class="card-header collapsible-header" onclick="toggleSection('env')">
+            <div class="card-header collapsible-header" role="button" tabindex="0" aria-expanded="false" onclick="toggleSection('env')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection('env')}">
               <i class="bi bi-chevron-down toggle-icon collapsed me-1"></i><i class="bi bi-info-circle-fill me-2"></i><span>Environment</span>
             </div>
             <div class="card-body env-body collapse-section collapsed" id="section-env">
@@ -375,10 +376,10 @@
 
     function showToast(m, type) { const d=document.createElement('div'); d.className=`toast align-items-center text-white bg-${type||'info'} border-0 show`; d.innerHTML=`<div class="d-flex"><div class="toast-body"></div><button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>`; d.querySelector('.toast-body').textContent = m; document.getElementById('toastContainer').appendChild(d); setTimeout(()=>d.remove(),3000); }
     function escapeHtml(t){if(t==null)return '';const d=document.createElement('div');d.textContent=String(t);return d.innerHTML.replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
-    function toggleSection(n) { const b=document.getElementById('section-'+n),c=document.querySelector('[data-section="'+n+'"]'),i=c?.querySelector('.toggle-icon'); if(b&&i){b.classList.toggle('collapsed');i.classList.toggle('collapsed');}setTimeout(initLiquidGlass,50); }
+    function toggleSection(n) { const b=document.getElementById('section-'+n),c=document.querySelector('[data-section="'+n+'"]'),i=c?.querySelector('.toggle-icon'),h=c?.querySelector('.collapsible-header'); if(b&&i){b.classList.toggle('collapsed');i.classList.toggle('collapsed');if(h)h.setAttribute('aria-expanded',String(!b.classList.contains('collapsed')));}setTimeout(initLiquidGlass,50); }
 
     function setWallpaperActive(source) {
-      document.querySelectorAll('.btn-wp').forEach(b => b.classList.toggle('active', b.dataset.wp === source));
+      document.querySelectorAll('.btn-wp').forEach(b => { const isActive = b.dataset.wp === source; b.classList.toggle('active', isActive); b.setAttribute('aria-pressed', isActive ? 'true' : 'false'); });
     }
     let _wallpaperObjUrl = null;
     function applyWallpaperBlob(blob) {
@@ -456,7 +457,9 @@
     }
     function setSleevActive(enabled) {
       document.querySelectorAll('.btn-sleev').forEach(btn => {
-        btn.classList.toggle('active', (enabled && btn.dataset.sleev === 'on') || (!enabled && btn.dataset.sleev === 'off'));
+        const isActive = (enabled && btn.dataset.sleev === 'on') || (!enabled && btn.dataset.sleev === 'off');
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
       });
     }
     async function toggleSleev(enabled) {
@@ -517,7 +520,9 @@
 
     function setGitGuardActive(enabled) {
       document.querySelectorAll('.btn-gitguard').forEach(btn => {
-        btn.classList.toggle('active', (enabled && btn.dataset.gitguard === 'on') || (!enabled && btn.dataset.gitguard === 'off'));
+        const isActive = (enabled && btn.dataset.gitguard === 'on') || (!enabled && btn.dataset.gitguard === 'off');
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
       });
       const status = document.getElementById('gitGuardStatus');
       if (status) {
@@ -545,7 +550,7 @@
     function renderTokenPools() {
       const container = document.getElementById('tokenPoolsContainer');
       if (!proxyData || !proxyData.token_state || !proxyData.token_state.length) {
-        container.innerHTML = '<div class="text-center py-3"><i class="bi bi-key" style="font-size:2rem;color:rgba(255,255,255,0.4)"></i><p class="mt-2 text-muted">' + escapeHtml('No API keys') + '</p></div>';
+        container.innerHTML = '<div class="text-center py-3"><i class="bi bi-key" style="font-size:2rem;color:rgba(255,255,255,0.7)"></i><p class="mt-2 text-muted">' + escapeHtml('No API keys') + '</p></div>';
         document.getElementById('tokenCountBadge').textContent = '0'; return;
       }
       document.getElementById('tokenCountBadge').textContent = proxyData.token_state.length;
@@ -560,7 +565,7 @@
       const badge = document.getElementById('modelCountBadge');
       if (!enabledModels.length) {
         badge.textContent = '0';
-        container.innerHTML = '<div class="text-center py-3"><i class="bi bi-info-circle" style="font-size:24px;color:rgba(255,255,255,0.4)"></i><p class="mt-2 text-muted">' + escapeHtml('No enabled models. Add model IDs to ENABLED_MODELS in .config/config.json.') + '</p></div>';
+        container.innerHTML = '<div class="text-center py-3"><i class="bi bi-info-circle" style="font-size:24px;color:rgba(255,255,255,0.7)"></i><p class="mt-2 text-muted">' + escapeHtml('No enabled models. Add model IDs to ENABLED_MODELS in .config/config.json.') + '</p></div>';
         return;
       }
       const enabledCount = enabledModels.filter(m => !disabledModels.has(m)).length;
@@ -637,6 +642,8 @@
         document.getElementById('concUsageText').textContent = active + ' of ' + barMax + ' sessions';
         const pctVsSoft = limit > 0 ? Math.min(200, (active / limit) * 100) : (barMax > 0 ? (active / barMax) * 100 : 0);
         document.getElementById('concPctText').textContent = parseFloat(pctVsSoft.toFixed(2)) + '%';
+        const pb = document.querySelector('[role="progressbar"]');
+        if (pb) pb.setAttribute('aria-valuenow', Math.round(activePct).toString());
         // Detail items
         const detailGrid = document.getElementById('concurrencyDetailGrid');
         const details = [];
@@ -680,9 +687,9 @@
       const userIdRow = umansUserId ? `<div class="mt-1 d-flex align-items-center gap-2" style="font-size:0.7rem;color:rgba(255,255,255,0.55)">
           <span><i class="bi bi-person-badge me-1"></i>${escapeHtml('User ID')}:</span>
           <code class="masked-userid" data-userid="${escapeHtml(displayUserId)}" onclick="this.classList.toggle('revealed');this.textContent=this.classList.contains('revealed')?this.dataset.userid:'${'•'.repeat(Math.min(displayUserId.length, 12))}'" style="font-size:0.7rem;color:rgba(255,255,255,0.85);background:rgba(255,255,255,0.05);padding:1px 4px;border-radius:4px;word-break:break-all;cursor:pointer">${'•'.repeat(Math.min(displayUserId.length, 12))}</code>
-          <button class="btn btn-sm p-0 ms-auto" style="background:transparent;border:none;color:rgba(255,255,255,0.5);font-size:0.65rem" onclick="copyUserId()" title="${escapeHtml('User ID copied')}"><i class="bi bi-clipboard"></i></button>
+          <button class="btn btn-sm p-0 ms-auto" style="background:transparent;border:none;color:rgba(255,255,255,0.75);font-size:0.65rem" onclick="copyUserId()" title="${escapeHtml('User ID copied')}"><i class="bi bi-clipboard"></i></button>
         </div>` : '';
-      const accountHtml = `<div style="font-size:10px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px">${escapeHtml('Account')}:</div>
+      const accountHtml = `<div style="font-size:10px;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px">${escapeHtml('Account')}:</div>
         <div class="mb-2 p-2" style="background:rgba(255,255,255,0.04);border-radius:8px;border:1px solid rgba(255,255,255,0.1);font-size:0.8rem">
           <div class="d-flex justify-content-between align-items-center">
             <span style="color:rgba(255,255,255,0.7)"><i class="bi bi-person-circle me-1"></i>API key</span>
@@ -691,7 +698,7 @@
         </div>`;
       let keysHtml = '';
       if (real.length) {
-        keysHtml = '<div class="mt-2" style="font-size:10px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px">' + escapeHtml('Keys') + ':</div>' +
+        keysHtml = '<div class="mt-2" style="font-size:10px;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px">' + escapeHtml('Keys') + ':</div>' +
         real.map((k,i)=>{
           const oi = keys.indexOf(k);
           if(editingIdx===oi) return `<div class="pool-card"><div class="mb-2"><label class="form-label" style="font-size:10px">${escapeHtml('Name')}</label><input type="text" class="form-control form-control-sm" id="editKeyName" value="${escapeHtml(k.name||'')}"></div><div class="mb-2"><label class="form-label" style="font-size:10px">${escapeHtml('Key')}</label><input type="text" class="form-control form-control-sm" id="editKey" value="${escapeHtml(k.key||'')}"></div><div class="d-flex gap-2"><button class="btn btn-sm btn-success" onclick="saveEditKey(${oi})"><i class="bi bi-check me-1"></i>${escapeHtml('Save')}</button><button class="btn btn-sm btn-secondary" onclick="cancelEditKey()">${escapeHtml('Cancel')}</button></div></div>`;
@@ -802,9 +809,11 @@
     function setRefreshInterval(seconds) {
       if (usageIntervalId) clearInterval(usageIntervalId);
       const ms = parseInt(seconds) * 1000;
-      usageIntervalId = setInterval(fetchUsage, ms);
+      usageIntervalId = setInterval(() => { fetchUsage(); fetchConcurrency(); }, ms);
       document.querySelectorAll('.btn-refresh').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.refresh === seconds.toString());
+        const isActive = btn.dataset.refresh === seconds.toString();
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
       });
     }
     async function checkHealth() {
@@ -857,9 +866,7 @@
       });
       updateStatus();
       setInterval(updateStatus,15000);
-      fetchConcurrency();
-      setInterval(fetchConcurrency,15000);
-      fetchUsage();
+      fetchUsage(); fetchConcurrency();
       setRefreshInterval('30');
       document.getElementById('modelsContainer').addEventListener('click', (e) => {
         const tag = e.target.closest('.model-tag');
