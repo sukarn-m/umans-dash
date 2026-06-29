@@ -1930,7 +1930,14 @@ function pipeBodyToResponse(body, res) {
 
   function safeWrite(chunk) {
     if (!closed) {
-      try { res.write(chunk); } catch (e) { closed = true; }
+      try {
+        const ok = res.write(chunk);
+        if (!ok && cleanup && typeof body.pipe === 'function') {
+          // Backpressure: pause the upstream stream until res drains.
+          body.pause();
+          res.once('drain', () => { try { body.resume(); } catch {} });
+        }
+      } catch (e) { closed = true; }
     }
   }
 
@@ -2539,7 +2546,10 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
           // interception is unsafe; full-buffering is correct and acceptable for
           // agent tool-call streams.
           let rawSse = '';
-          const collectData = (chunk) => { rawSse += Buffer.from(chunk).toString('utf8'); };
+          let clientGone = false;
+          const onClientClose = () => { clientGone = true; try { resp.body.destroy(); } catch {} };
+          res.on('close', onClientClose);
+          const collectData = (chunk) => { if (!clientGone) rawSse += Buffer.from(chunk).toString('utf8'); };
           if (resp.body && typeof resp.body.pipe === 'function') {
             await new Promise((resolve) => {
               const onEnd = () => { cleanup(); resolve(); };
@@ -2548,6 +2558,7 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
                 resp.body.removeListener('data', collectData);
                 resp.body.removeListener('end', onEnd);
                 resp.body.removeListener('error', onError);
+                res.removeListener('close', onClientClose);
               };
               resp.body.on('data', collectData);
               resp.body.on('end', onEnd);
@@ -2556,13 +2567,17 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
           } else if (resp.body && typeof resp.body.getReader === 'function') {
             const reader = resp.body.getReader();
             try {
-              while (true) {
+              while (!clientGone) {
                 const { done, value } = await reader.read();
                 if (done) break;
                 collectData(value);
               }
             } catch { try { reader.cancel(); } catch {} }
+            res.removeListener('close', onClientClose);
+          } else {
+            res.removeListener('close', onClientClose);
           }
+          if (clientGone) return { retry: false };
           const sanitizedSse = sanitizeSseResponse(rawSse);
           res.writeHead(resp.status, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
           try { res.end(sanitizedSse); } catch {}
