@@ -4,8 +4,8 @@
 
 ```
 UMANS-PROXY/
-├── proxy.js              # Main proxy implementation + request router (~3390 lines)
-├── dashboard.html        # Dashboard with usage cards, model list, key management, Sleev toggle
+├── proxy.js              # Main proxy implementation + request router (~3430 lines)
+├── dashboard.html        # Dashboard with usage/concurrency cards, Quick Settings, key management, model list
 ├── .config/
 │   └── config.json       # Runtime configuration (API key, KEYS array, enabled models, etc.)
 ├── .cache/               # Cached assets (auto-created)
@@ -30,7 +30,7 @@ UMANS-PROXY/
 - `IS_BUN` — Detected at runtime (`typeof Bun !== 'undefined'`)
 - `RUNTIME_VERSION` — Bun or Node version string
 - Error logging system (`initErrorLogger`, `redactHeaders`, `redactBodyJson`, `logHttpError`) — writes rotating error logs to `.logs/errors-*.log` with header/body redaction
-- `loadConfig()` (line 452) — Loads `.config/config.json` with env var overrides (`LISTEN_ADDR`, `UPSTREAM_BASE_URL`, `REQUEST_TIMEOUT`, `UMANS_API_KEY`, `API_KEYS`, `CACHE_TTL`, `CACHE_MAX_SIZE`, `CACHE_ENABLED`, `OVERRIDE_CONCURRENCY`, `MAX_IMAGES`, `SLEEV_ENABLED`, `VISION_HANDOFF_ENABLED`, `VISION_HANDOFF_MODEL`, `VISION_HANDOFF_PROMPT`). Loads the `KEYS` array from config for key pool persistence.
+- `loadConfig()` (line 452) — Loads `.config/config.json` with env var overrides (`LISTEN_ADDR`, `UPSTREAM_BASE_URL`, `REQUEST_TIMEOUT`, `UMANS_API_KEY`, `API_KEYS`, `CACHE_TTL`, `CACHE_MAX_SIZE`, `CACHE_ENABLED`, `OVERRIDE_CONCURRENCY`, `MAX_IMAGES`, `SLEEV_ENABLED`, `SHELL_TOOL_GUARD`, `VISION_HANDOFF_ENABLED`, `VISION_HANDOFF_MODEL`, `VISION_HANDOFF_PROMPT`). Loads the `KEYS` array from config for key pool persistence.
 - `saveConfig()` (line 545) / `debouncedSaveConfig()` (line 575) — Writes config (debounced 500ms), including `KEYS` array persistence
 - `parseDuration()` (line 523) — Parses strings like `15m`, `6h`, `30s` to ms
 - `maskToken(key)` (line 537) — Masks an API key for display as `prefix...suffix`
@@ -60,17 +60,21 @@ UMANS-PROXY/
 | `RETRY_DELAY_MS` | Number | Base retry backoff (3000 ms) |
 | `sleevState` | Object | Sleev gateway lifecycle state (`{ binary, gatewayProcess, signInProcess, ready, lastError }`) |
 | `usageCache` | Object | Cached upstream usage data (5-min TTL) |
-| `lastConcurrency` | Object | Last fetched concurrency data |
+| `lastConcurrency` | Object | Last fetched concurrency data `{ concurrent, limit, hard_cap, user_id }` |
+| `throttledCount` | Number | Proxy-side 503 queue-full rejection counter (reset on new usage window) |
+| `throttledWindowStart` | String/null | Tracks current usage window start for throttle-reset logic |
 
-### 3. Shell-Tool Guard (proxy.js:120-288)
+### 3. Shell-Tool Guard (proxy.js:120-288) — disabled by default
+
+**Config key**: `SHELL_TOOL_GUARD` (default `false`). Toggled via dashboard "Git Guard" in Quick Settings.
 
 `isGitCommand(cmd)` detects shell commands that start with or invoke `git` (`git clean -fd`, `bash -c "git status"`, `cmd /c git ...`, quoted Windows paths to `git.exe`, etc.) while ignoring false positives such as `echo git` or `python script.py git`.
 
 `sanitizeShellToolCall(tc)` and `sanitizeChatCompletionResponse(body)` modify returned assistant `tool_calls` whose tool name matches `bash | shell | run_command_in_terminal | execute_command | run_in_terminal | send_to_terminal | run_vscode_command | create_and_run_task | terminal`. When a matched command is detected, the tool argument is rewritten to `echo "BLOCKED: git commands are disabled by proxy policy"` before the response reaches the client.
 
-SSE streaming responses are also sanitized via `sanitizeSseResponse(text)` (line 226), which buffers the full stream, assembles partial tool_calls, runs the shell guard, and re-emits sanitized SSE events.
+SSE streaming responses are also sanitized via `sanitizeSseResponse(text)` (line 226), which buffers the full stream, assembles partial tool_calls, runs the shell guard, and re-emits sanitized SSE events. **When the guard is enabled, the OpenAI SSE path buffers the entire upstream response before sending it to the client — real-time streaming is disabled.** When the guard is disabled, SSE responses are piped directly to the client for real-time streaming.
 
-Applies to:
+Applies to (only when enabled):
 - Non-streaming chat responses
 - Streaming SSE responses (buffered and re-emitted)
 - Cached responses on cache hit
@@ -163,7 +167,7 @@ Normalizes JSON Schema in tools to handle `$ref`, `$defs`, `definitions`, nullab
 
 - `isNodeStream(body)` — Duck-type check for Node.js streams
 - `readBodyText(body)` — Handles Node streams, Web ReadableStreams, and async iterables
-- `pipeBodyToResponse(body, res)` — Pipes upstream response to HTTP response with abort handling and cleanup
+- `pipeBodyToResponse(body, res)` — Pipes upstream response to HTTP response with abort handling, cleanup, and **backpressure handling**: when `res.write()` returns `false` and the body is a Node stream, the upstream is paused (`body.pause()`) and resumed on the `res` `drain` event. Client disconnects are detected via `res.on('close')`, which destroys the upstream body.
 
 ### 10. HTTP Handler Helpers (proxy.js:2110-2158)
 
@@ -182,7 +186,8 @@ Normalizes JSON Schema in tools to handle `$ref`, `$defs`, `definitions`, nullab
 - `processQueue()` (line 2263) — Dequeues from `requestQueue` while `activeRequests < limit`. Dispatches to `proxyAnthropicRequest` or `proxyChatRequest` based on `format`.
 - `handleChatCompletions` (line 2281) — Parses body, checks queue overflow (`MAX_QUEUE_SIZE`), queues or executes via `proxyChatRequest`
 - `handleAnthropicMessages` (line 2390) — Entry point for `/v1/messages`; applies image cap, queues or executes via `proxyAnthropicRequest`
-- `proxyChatRequest` (line 2414) — Full proxy pipeline: key acquire → session label → reasoning strip → image-attachment limit (`limitImagesInMessages`) → cache check → model resolve → tool normalize → reasoning caps → rate limit → **retry-wrapped upstream call** (see Retry Logic) → shell-tool guard → stream/non-stream response. The full request body of the first request in a new session is logged to the console. HTTP errors are logged to `.logs/` via `logHttpError`.
+- `proxyChatRequest` (line 2436) — Full proxy pipeline: key acquire → session label → reasoning strip → image-attachment limit (`limitImagesInMessages`) → cache check → model resolve → tool normalize → reasoning caps → rate limit → **retry-wrapped upstream call** (see Retry Logic) → shell-tool guard → stream/non-stream response. The full request body of the first request in a new session is logged to the console. HTTP errors are logged to `.logs/` via `logHttpError`.
+  - **SSE streaming path (two modes)**: When `SHELL_TOOL_GUARD` is **enabled**, the upstream SSE stream is fully buffered (with client-disconnect detection — the upstream body is destroyed if the client closes mid-stream), then sanitized via `sanitizeSseResponse()` and sent as a single response. When **disabled**, the SSE stream is piped directly to the client via `pipeBodyToResponse()` for real-time streaming.
 - `proxyAnthropicRequest` (line 2301) — Anthropic pass-through: key acquire → session label → model resolve → vision handoff → upstream `messages()` call → `await pipeBodyToResponse()` → key health marking.
 - `validateApiKey()` (line 2631) — Calls `getUserInfo()`, populates `userInfoCache` + `modelDisplayNameMap` + `modelInfoMap`, returns boolean
 
@@ -199,9 +204,9 @@ Normalizes JSON Schema in tools to handle `$ref`, `$defs`, `definitions`, nullab
 | `/api/bg-freegen` | GET/POST | FreeGen AI wallpaper generator. `GET` returns current cached wallpaper; `POST` generates and returns new image (`prompt`, `ratio`, `wait` JSON body). Background generation writes to `.cache/wallpaper-freegen.pending.jpg` and atomically swaps to `.cache/wallpaper-freegen.jpg` when done. |
 | `/api/keys` | GET/POST | Multi-key CRUD (add/update/delete). Persists `KEYS` array to config. |
 | `/api/cache` | GET/DELETE | Cache stats/clear |
-| `/api/umans/usage` | GET | UMANS usage data (proxied from upstream `/usage` with 5-min cache) |
+| `/api/umans/usage` | GET | UMANS usage data (proxied from upstream `/usage` with 5-min cache; `?fresh=1` bypasses cache) |
 | `/api/umans/usage-history` | GET | Usage history (currently returns empty buckets) |
-| `/api/umans/concurrency` | GET | Concurrent sessions, limit, active count, queue depth, user_id |
+| `/api/umans/concurrency` | GET | Concurrent sessions, limit, hard_cap, active count, queue depth, user_id (`?fresh=1` bypasses cache) |
 | `/api/umans/user` | GET | Stub: returns `{ loggedIn: true, email: '' }` (login/logout endpoints removed) |
 | `/api/sleev` | GET/POST | Get Sleev gateway status / toggle Sleev on/off |
 | `/api/restart` | POST | Triggers `process.exit(42)` after 500ms (server.close + graceful shutdown) |
@@ -219,26 +224,29 @@ Normalizes JSON Schema in tools to handle `$ref`, `$defs`, `definitions`, nullab
 - When Sleev is enabled and ready, the provider entry points to the Sleev gateway (`http://127.0.0.1:17321/v1`) with `sleeve-harness` and `sleeve-base-url` headers, and opencode's own context pruning is disabled (`compaction.prune = false`).
 - Integrates with [models.dev](https://models.dev) catalog (`fetchModelsDevCatalog`, line 1618) for reasoning metadata enrichment.
 
-### 14. Usage Tracking & Concurrency (proxy.js:948-986)
+### 14. Usage Tracking & Concurrency (proxy.js:948-1001)
 
-- `fetchUsage()` (line 951) — Fetches usage data from upstream `/usage` endpoint with 5-min cache
-- `fetchConcurrency()` (line 966) — Extracts `usage.concurrent_sessions`, `limits.concurrency.limit`, `limits.concurrency.hard_cap`, and `user_id` from cached usage data
-- `getEffectiveConcurrency()` (line 976) — Returns `{ concurrent, limit, hard_cap, overridden, user_id }`. The proxy gates on `hard_cap ?? limit` (burst capacity) before queueing. If `config.overrideConcurrency > 0`, the effective `hard_cap` is capped to `min(override, apiHardCap)` (or override when the API hard_cap is unknown).
+- `fetchUsage(fresh = false)` (line 958) — Fetches usage data from upstream `/usage` endpoint with 5-min cache. When `fresh` is `true`, bypasses the cache and always re-fetches. Also detects usage-window changes (via `window.started_at`) and resets `throttledCount` when a new window begins.
+- `fetchConcurrency(fresh = false)` (line 979) — Extracts `usage.concurrent_sessions`, `limits.concurrency.limit`, `limits.concurrency.hard_cap`, and `user_id` from cached usage data. Passes `fresh` through to `fetchUsage`.
+- `getEffectiveConcurrency()` (line 990) — Returns `{ concurrent, limit, hard_cap, overridden, user_id }`. The proxy gates on `hard_cap ?? limit` (burst capacity) before queueing. If `config.overrideConcurrency > 0`, the effective `hard_cap` is capped to `min(override, apiHardCap)` (or override when the API hard_cap is unknown).
+- `bumpThrottled()` (line 956) — Increments `throttledCount`; called when the concurrency queue is full and a 503 is returned to the client.
 - **Note**: `loginToApp()`, `EMAIL`, `PASSWORD`, and `APP_BASE` have been removed. The `/api/umans/login` and `/api/umans/logout` endpoints no longer exist. `/api/umans/user` is a stub returning `{ loggedIn: true, email: '' }`.
 
-### 15. Dashboard (dashboard.html, ~824 lines)
+### 15. Dashboard (dashboard.html, ~881 lines)
 
-- **5-hour Window Card** — Stat Cards: Requests, Throttled, Cached % (3 inline stat cards). Detail grid: Start Time, Tokens In, Tokens Out. No Window Progress bar. Throttled counts proxy-side 503 queue-full rejections (reset when usage window changes).
-- **Current Concurrency Card** — 4 stat cards: Active, Queued, Limit (soft), Burst (hard cap). Progress bar scales to burst capacity with a vertical marker at the soft-limit position. Detail grid: User ID (click-to-reveal), Concurrent, Queued, Available. No badge in the card header.
-- **API Key section** — Key pool display with SS Mode (blur on hover). Collapsible.
-- **Models section** — View-only list of models from catalog, with enable/disable toggle per model. Collapsible.
-- **Quick Actions** — Check Health, Test Connection, Refresh Usage, Restart Proxy. Expanded by default.
-- **Environment** — Runtime, Port, Started At, SS Mode toggle, Wallpaper selector (None/Bing/Wallhaven/FreeGen), FreeGen prompt input + Generate button, Sleev toggle with status display. Collapsible.
-- **Key Management Modal** — Add/edit/delete API keys with inline editing. Shows account info with User ID (click-to-reveal masking via `.masked-userid` with `data-userid` attribute — dots displayed by default, click to reveal real ID, click again to re-mask). No email field. Copy-to-clipboard button for User ID.
-- **Sleev Integration** — Toggle in Environment card. When sign-in is required, shows `npx sleev auth login` command with copy button. Polls `/api/sleev` for status updates every 3s.
+- **5-hour Window Card** — Stat Cards: Requests, Throttled, Cached % (3 inline stat cards). Detail grid: Start Time, Tokens In, Tokens Out. No Window Progress bar. Throttled counts proxy-side 503 queue-full rejections (reset when usage window changes). A plan badge is shown in the card header when `plan.display_name` is available.
+- **Current Concurrency Card** — 4 stat cards: Active (green border), Queued (blue border), Limit (soft, yellow border), Burst (hard cap, orange border). Progress bar: solid fill = proxy active count (green in soft-cap region, gradient green→orange in burst region), dotted overlay = upstream concurrent sessions. Bottom border bars: yellow for soft-cap zone, orange for burst zone. Percentage is scaled to 100% at soft cap, 200% at hard cap. Detail grid: Queued (shown only when > 0). No badge in card header. User ID is displayed in the header bar (see below), not in the detail grid.
+- **User ID in header bar** — Displayed left of the Online indicator. Click-to-reveal masking via `.masked-userid` with `data-userid` attribute (dots displayed by default, click to reveal real ID, click again to re-mask).
+- **API Key section** — Key pool display with status badges. Collapsible. Shows key count badge in header.
+- **Models section** — View-only list of models from catalog, with enable/disable toggle per model (via `DISABLED_MODELS`). Collapsible.
+- **Quick Settings** (expanded by default) — Automatic Refresh button group (30s/1m/2m/5m=298s), Wallpaper selector (None/Bing/Wallhaven/FreeGen), FreeGen prompt + Generate button, Context Compression (Sleev) toggle with info tooltip, Git Guard toggle with info tooltip.
+- **Quick Actions** (collapsed) — Check Health, Test Connection, Manual Refresh, Restart Proxy.
+- **Environment** (collapsed) — Runtime, Port, Started At.
+- **Key Management Modal** — Add/edit/delete API keys with inline editing. Shows account info with User ID (click-to-reveal masking, copy-to-clipboard button). No email field.
+- **Sleev Integration** — Toggle in Quick Settings (not Environment). When sign-in is required, shows `npx sleev auth login` command with copy button. Polls `/api/sleev` for status updates every 3s.
 - **Glass UI** — Procedural SVG filter-based glassmorphism (`feDisplacementMap`, `feColorMatrix`, `feGaussianBlur`). Liquid glass effect computed per-card via `initLiquidGlass()`.
 - **Wallpaper Loader** — Transparent overlay (`background:transparent`) shown until wallpaper is loaded, then fades out. `body` CSS does not set `background-color` (server-injected `<style>` in `<head>` handles it).
-- **Auto-refresh** — Status every 15s, usage every 30s, concurrency every 15s.
+- **Auto-refresh** — Status every 15s, usage via configurable interval (default 30s, set in Quick Settings), concurrency every 15s. Dashboard always fetches usage and concurrency with `?fresh=1` to bypass server-side cache.
 - **No Test Chat** — Removed entirely. No model selector or streaming chat panel.
 - **No i18n/Autotranslate** — All `data-i18n` attributes, `t()` function, translate overlay, and LOCALE config removed from dashboard. The i18n catalog and `/api/i18n` endpoint still exist in proxy.js but are unused by the dashboard.
 
@@ -360,7 +368,7 @@ Zero external npm dependencies — uses only Node.js built-in modules: `fs`, `pa
 
 ## Data Storage
 
-- `.config/config.json` — Full proxy config including API keys, `KEYS` array (persisted key pool), enabled/disabled models, display names, `OVERRIDE_CONCURRENCY`, `MAX_IMAGES`, `wallpaperSource`, `FREEGEN_PROMPT`, `SLEEV_ENABLED`, vision handoff settings, `DISABLED_MODELS`
+- `.config/config.json` — Full proxy config including API keys, `KEYS` array (persisted key pool), enabled/disabled models, display names, `OVERRIDE_CONCURRENCY`, `MAX_IMAGES`, `SHELL_TOOL_GUARD`, `wallpaperSource`, `FREEGEN_PROMPT`, `SLEEV_ENABLED`, `VISION_HANDOFF_ENABLED`, `VISION_HANDOFF_MODEL`, `VISION_HANDOFF_PROMPT`, `DISABLED_MODELS`
 - `.cache/wallpaper.jpg` — Cached Bing wallpaper
 - `.cache/wallpaper-haven.jpg` — Cached Wallhaven wallpaper
 - `.cache/wallpaper-freegen.jpg` — Current FreeGen AI wallpaper

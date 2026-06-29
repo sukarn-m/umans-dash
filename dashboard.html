@@ -218,6 +218,17 @@
                 </div>
                 <div id="sleevStatus" style="font-size:0.6rem;color:rgba(255,255,255,0.5);min-height:0.8rem;margin-top:2px"></div>
               </div>
+              <div class="mb-2">
+                <label class="form-label d-flex align-items-center gap-1" style="font-size:0.7rem;color:rgba(255,255,255,0.5);margin-bottom:2px">
+                  Git Guard
+                  <i class="bi bi-info-circle" style="cursor:help;color:rgba(255,255,255,0.4)" data-bs-toggle="tooltip" data-bs-html="true" title="Blocks git commands in LLM tool_call responses by rewriting them to a harmless echo. Enabling this disables real-time streaming on the OpenAI endpoint — the full response is buffered before sending to the client."></i>
+                </label>
+                <div class="btn-group w-100" role="group" id="gitGuardGroup">
+                  <button class="btn btn-outline-action btn-gitguard" data-gitguard="off" onclick="toggleGitGuard(false)">Off</button>
+                  <button class="btn btn-outline-action btn-gitguard" data-gitguard="on" onclick="toggleGitGuard(true)">On</button>
+                </div>
+                <div id="gitGuardStatus" style="font-size:0.6rem;color:rgba(255,255,255,0.5);min-height:0.8rem;margin-top:2px"></div>
+              </div>
             </div>
           </div>
         </div>
@@ -504,6 +515,33 @@
       }
     }
 
+    function setGitGuardActive(enabled) {
+      document.querySelectorAll('.btn-gitguard').forEach(btn => {
+        btn.classList.toggle('active', (enabled && btn.dataset.gitguard === 'on') || (!enabled && btn.dataset.gitguard === 'off'));
+      });
+      const status = document.getElementById('gitGuardStatus');
+      if (status) {
+        status.innerHTML = enabled
+          ? '<span style="color:#fbbf24">Warning:</span> Real-time streaming is disabled. Responses are buffered before delivery.'
+          : '';
+      }
+    }
+    async function toggleGitGuard(enabled) {
+      setGitGuardActive(enabled);
+      const status = document.getElementById('gitGuardStatus');
+      try {
+        const r = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shellToolGuard: enabled }) });
+        const d = await r.json();
+        if (!d.success) throw new Error('failed');
+        if (status && enabled) {
+          status.innerHTML = '<span style="color:#fbbf24">Warning:</span> Real-time streaming is disabled. Responses are buffered before delivery.';
+        }
+      } catch (e) {
+        if (status) status.textContent = 'Error: ' + e.message;
+        setGitGuardActive(!enabled);
+      }
+    }
+
     function renderTokenPools() {
       const container = document.getElementById('tokenPoolsContainer');
       if (!proxyData || !proxyData.token_state || !proxyData.token_state.length) {
@@ -696,6 +734,8 @@
           // Sleev init
           setSleevActive(!!cd.sleevEnabled);
           pollSleevStatus();
+          // Git Guard init
+          setGitGuardActive(!!cd.shellToolGuard);
         }
         renderModels(); renderTokenPools(); updateStats(); await fetchUsage();
         setTimeout(initLiquidGlass, 50);

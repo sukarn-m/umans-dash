@@ -460,6 +460,7 @@ function loadConfig() {
     CACHE_ENABLED: true,
     OVERRIDE_CONCURRENCY: 0,
     MAX_IMAGES: 9,
+    SHELL_TOOL_GUARD: false,
   };
   if (fs.existsSync(configPath)) {
     try {
@@ -517,6 +518,7 @@ function loadConfig() {
     visionHandoffModel: rawConfig.VISION_HANDOFF_MODEL || 'umans-kimi-k2.7',
     visionHandoffPrompt: rawConfig.VISION_HANDOFF_PROMPT || '',
     sleevEnabled: rawConfig.SLEEV_ENABLED === true,
+    shellToolGuard: rawConfig.SHELL_TOOL_GUARD === true,
   };
 }
 
@@ -568,6 +570,7 @@ function saveConfig(cfg) {
     VISION_HANDOFF_MODEL: cfg.visionHandoffModel || 'umans-kimi-k2.7',
     VISION_HANDOFF_PROMPT: cfg.visionHandoffPrompt || '',
     SLEEV_ENABLED: cfg.sleevEnabled === true,
+    SHELL_TOOL_GUARD: cfg.shellToolGuard === true,
   }, null, 2));
 }
 
@@ -2484,7 +2487,7 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
       try {
         let parsed = null;
         try { parsed = JSON.parse(cached); } catch (e) { /* ignore */ }
-        if (parsed) parsed = sanitizeChatCompletionResponse(parsed);
+        if (parsed && config.shellToolGuard) parsed = sanitizeChatCompletionResponse(parsed);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(parsed ? JSON.stringify(parsed) : cached);
       }
@@ -2541,46 +2544,52 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
       keyPool.markHealthy(slot.index);
       try {
         if (contentType.includes('text/event-stream')) {
-          // Buffer the SSE stream so we can sanitize any shell tool_calls before
-          // the client sees them. Tool-call argument chunks may be split, so partial
-          // interception is unsafe; full-buffering is correct and acceptable for
-          // agent tool-call streams.
-          let rawSse = '';
-          let clientGone = false;
-          const onClientClose = () => { clientGone = true; try { resp.body.destroy(); } catch {} };
-          res.on('close', onClientClose);
-          const collectData = (chunk) => { if (!clientGone) rawSse += Buffer.from(chunk).toString('utf8'); };
-          if (resp.body && typeof resp.body.pipe === 'function') {
-            await new Promise((resolve) => {
-              const onEnd = () => { cleanup(); resolve(); };
-              const onError = () => { cleanup(); try { resp.body.destroy(); } catch {} resolve(); };
-              const cleanup = () => {
-                resp.body.removeListener('data', collectData);
-                resp.body.removeListener('end', onEnd);
-                resp.body.removeListener('error', onError);
-                res.removeListener('close', onClientClose);
-              };
-              resp.body.on('data', collectData);
-              resp.body.on('end', onEnd);
-              resp.body.on('error', onError);
-            });
-          } else if (resp.body && typeof resp.body.getReader === 'function') {
-            const reader = resp.body.getReader();
-            try {
-              while (!clientGone) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                collectData(value);
-              }
-            } catch { try { reader.cancel(); } catch {} }
-            res.removeListener('close', onClientClose);
+          if (config.shellToolGuard) {
+            // Buffer the SSE stream so we can sanitize any shell tool_calls before
+            // the client sees them. Tool-call argument chunks may be split, so partial
+            // interception is unsafe; full-buffering is correct and acceptable for
+            // agent tool-call streams.
+            let rawSse = '';
+            let clientGone = false;
+            const onClientClose = () => { clientGone = true; try { resp.body.destroy(); } catch {} };
+            res.on('close', onClientClose);
+            const collectData = (chunk) => { if (!clientGone) rawSse += Buffer.from(chunk).toString('utf8'); };
+            if (resp.body && typeof resp.body.pipe === 'function') {
+              await new Promise((resolve) => {
+                const onEnd = () => { cleanup(); resolve(); };
+                const onError = () => { cleanup(); try { resp.body.destroy(); } catch {} resolve(); };
+                const cleanup = () => {
+                  resp.body.removeListener('data', collectData);
+                  resp.body.removeListener('end', onEnd);
+                  resp.body.removeListener('error', onError);
+                  res.removeListener('close', onClientClose);
+                };
+                resp.body.on('data', collectData);
+                resp.body.on('end', onEnd);
+                resp.body.on('error', onError);
+              });
+            } else if (resp.body && typeof resp.body.getReader === 'function') {
+              const reader = resp.body.getReader();
+              try {
+                while (!clientGone) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  collectData(value);
+                }
+              } catch { try { reader.cancel(); } catch {} }
+              res.removeListener('close', onClientClose);
+            } else {
+              res.removeListener('close', onClientClose);
+            }
+            if (clientGone) return { retry: false };
+            const sanitizedSse = sanitizeSseResponse(rawSse);
+            res.writeHead(resp.status, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
+            try { res.end(sanitizedSse); } catch {}
           } else {
-            res.removeListener('close', onClientClose);
+            // Shell tool guard disabled: pipe SSE directly to client for real-time streaming
+            res.writeHead(resp.status, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
+            await pipeBodyToResponse(resp.body, res);
           }
-          if (clientGone) return { retry: false };
-          const sanitizedSse = sanitizeSseResponse(rawSse);
-          res.writeHead(resp.status, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
-          try { res.end(sanitizedSse); } catch {}
         } else {
           let bodyText = await readBodyText(resp.body);
           const skipHeaders = new Set(['content-length', 'transfer-encoding', 'connection', 'keep-alive', 'content-encoding']);
@@ -2591,7 +2600,7 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
           }
           let parsed = null;
           try { parsed = JSON.parse(bodyText); } catch (e) { /* ignore */ }
-          if (parsed) parsed = sanitizeChatCompletionResponse(parsed);
+          if (parsed && config.shellToolGuard) parsed = sanitizeChatCompletionResponse(parsed);
           if (requestedStream) {
             res.writeHead(resp.status, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
             res.end(parsed ? JSON.stringify(parsed) : `data: ${JSON.stringify({ object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: bodyText }, finish_reason: 'stop' }] })}\n\n`);
@@ -2732,6 +2741,7 @@ async function handleRequest(req, res) {
         visionHandoffModel: config.visionHandoffModel || 'umans-kimi-k2.7',
         visionHandoffPrompt: config.visionHandoffPrompt || '',
         sleevEnabled: config.sleevEnabled === true,
+        shellToolGuard: config.shellToolGuard === true,
       };
       writeJSON(res, 200, safeConfig);
       return;
@@ -2755,6 +2765,7 @@ async function handleRequest(req, res) {
         if (typeof newConfig.visionHandoffModel === 'string') config.visionHandoffModel = newConfig.visionHandoffModel.trim();
         if (typeof newConfig.visionHandoffPrompt === 'string') config.visionHandoffPrompt = newConfig.visionHandoffPrompt;
         if (typeof newConfig.sleevEnabled === 'boolean') config.sleevEnabled = newConfig.sleevEnabled;
+        if (typeof newConfig.shellToolGuard === 'boolean') config.shellToolGuard = newConfig.shellToolGuard;
         if (Array.isArray(newConfig.keys)) {
           config.keys = newConfig.keys;
           keyPool = new KeyPool(config.keys.filter(k => k.key));
