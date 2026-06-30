@@ -628,8 +628,10 @@
         const bar = document.getElementById('concurrencyProgressBar');
         bar.style.width = activePct + '%';
         if (active > limit && limit > 0) {
-          // In burst zone: green up to limit, orange for the burst portion
-          const limitPct = (limit / barMax) * 100;
+          // In burst zone: green up to limit, orange for the burst portion.
+          // The gradient covers the filled bar (width = activePct), so the
+          // transition must be expressed as a percentage of *that* filled width.
+          const limitPct = activePct > 0 ? Math.min(100, (limit / active) * 100) : 100;
           bar.style.background = `linear-gradient(90deg, #32CD32 0%, #32CD32 ${limitPct}%, #fd7e14 ${limitPct}%, #fd7e14 100%)`;
           bar.style.boxShadow = '0 0 8px rgba(253,126,20,0.4)';
         } else {
