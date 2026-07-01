@@ -296,6 +296,7 @@ function loadConfig() {
   if (process.env.OVERRIDE_CONCURRENCY) rawConfig.OVERRIDE_CONCURRENCY = parseInt(process.env.OVERRIDE_CONCURRENCY);
   if (process.env.MAX_IMAGES) rawConfig.MAX_IMAGES = parseInt(process.env.MAX_IMAGES);
   if (process.env.SLEEV_ENABLED !== undefined) rawConfig.SLEEV_ENABLED = process.env.SLEEV_ENABLED !== 'false';
+  if (process.env.VISION_HANDOFF_ENABLED !== undefined) rawConfig.VISION_HANDOFF_ENABLED = process.env.VISION_HANDOFF_ENABLED !== 'false';
   if (process.env.VISION_HANDOFF_CACHE_ENABLED !== undefined) rawConfig.VISION_HANDOFF_CACHE_ENABLED = process.env.VISION_HANDOFF_CACHE_ENABLED !== 'false';
   if (process.env.VISION_HANDOFF_CACHE_TTL) rawConfig.VISION_HANDOFF_CACHE_TTL = process.env.VISION_HANDOFF_CACHE_TTL;
 
@@ -322,6 +323,7 @@ function loadConfig() {
     apiKey,
     requestTimeout,
     apiKeys: [...new Set(rawConfig.API_KEYS || [])],
+    // DEPRECATED: enabledModels is obsolete; model list comes from UMANS catalog
     enabledModels,
     modelDisplayNames: rawConfig.MODEL_DISPLAY_NAMES || {},
     keys,
@@ -330,6 +332,7 @@ function loadConfig() {
     overrideConcurrency: Math.max(0, rawConfig.OVERRIDE_CONCURRENCY || 0),
     maxImages: Math.max(1, rawConfig.MAX_IMAGES || 9),
     disabledModels: Array.isArray(rawConfig.DISABLED_MODELS) ? rawConfig.DISABLED_MODELS : [],
+    // DEPRECATED: locale was only consumed by the removed i18n translation feature
     locale: rawConfig.LOCALE || null,
     visionHandoffEnabled: rawConfig.VISION_HANDOFF_ENABLED === true,
     visionHandoffModel: rawConfig.VISION_HANDOFF_MODEL || 'umans-coder',
@@ -342,7 +345,9 @@ function loadConfig() {
 
 function parseDuration(str) {
   if (!str) return 0;
-  const match = str.match(/^(\d+)(h|m|s)$/);
+  const s = String(str).trim();
+  if (/^\d+$/.test(s)) return parseInt(s, 10);
+  const match = s.match(/^(\d+)(h|m|s)$/);
   if (!match) return 0;
   const value = parseInt(match[1]);
   const unit = match[2];
@@ -366,7 +371,8 @@ function saveConfig(cfg) {
   const configPath = path.join(__dirname, '.config', 'config.json');
   const dir = path.dirname(configPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify({
+  // DEPRECATED: enabledModels is obsolete; model list comes from UMANS catalog
+  const json = JSON.stringify({
     LISTEN_ADDR: cfg.listenAddr,
     UPSTREAM_BASE_URL: cfg.upstreamBaseURL,
     API_KEY: cfg.apiKey,
@@ -380,6 +386,7 @@ function saveConfig(cfg) {
     OVERRIDE_CONCURRENCY: cfg.overrideConcurrency || 0,
     MAX_IMAGES: cfg.maxImages || 9,
     DISABLED_MODELS: cfg.disabledModels || [],
+    // DEPRECATED: locale was only consumed by the removed i18n translation feature
     LOCALE: cfg.locale || null,
     VISION_HANDOFF_ENABLED: cfg.visionHandoffEnabled === true,
     VISION_HANDOFF_MODEL: cfg.visionHandoffModel || 'umans-coder',
@@ -387,7 +394,11 @@ function saveConfig(cfg) {
     VISION_HANDOFF_CACHE_ENABLED: cfg.visionHandoffCacheEnabled === true,
     VISION_HANDOFF_CACHE_TTL: cfg.visionHandoffCacheTtl || (24 * 60 * 60 * 1000),
     SLEEV_ENABLED: cfg.sleevEnabled === true,
-  }, null, 2));
+  }, null, 2);
+  // Atomic swap: write to temp file, then rename over the real config.
+  const tmpPath = path.join(dir, 'config.json.tmp');
+  fs.writeFileSync(tmpPath, json);
+  fs.renameSync(tmpPath, configPath);
 }
 
 let _saveConfigTimer = null;
@@ -397,371 +408,6 @@ function debouncedSaveConfig(cfg) {
     saveConfig(cfg);
     _saveConfigTimer = null;
   }, 500);
-}
-
-// --- i18n: UI string catalog for dashboard translation ---
-const I18N_STRINGS = {
-  app_title: 'UMANS Dash',
-  status_checking: 'Checking...',
-  status_online: 'Online',
-  status_offline: 'Offline',
-  status_reconnecting: 'Reconnecting...',
-
-  section_window: 'Window',
-  label_requests: 'Requests',
-  label_tokens: 'Tokens',
-  label_tokens_est: 'Tokens (est.)',
-  label_cached_pct: 'Cached %',
-
-  section_usage_history: '90-Day Usage History',
-  header_date: 'Date',
-  header_requests: 'Requests',
-  header_tokens: 'Tokens',
-  header_cached_pct: 'Cached%',
-  page_n_of_m: '{p}/{m}',
-
-  section_api_key: 'API Key',
-  btn_manage: 'Manage',
-  key_status_active: 'Active',
-  key_status_inactive: 'Inactive',
-  key_status_none: 'None',
-  key_status_checking: 'Checking...',
-  tokens_none: 'No API keys',
-
-  section_models: 'Models',
-    models_managed_hint: 'All UMANS models are loaded automatically from the API catalog.',
-    models_none: 'No UMANS models loaded. Check the API key on the Test Connection button.',
-
-  section_quick_actions: 'Quick Actions',
-  btn_check_health: 'Check Health',
-  btn_test_connection: 'Test Connection',
-  btn_refresh_usage: 'Refresh Usage',
-  btn_restart_proxy: 'Restart Proxy',
-
-  section_test_chat: 'Test Chat',
-  test_chat_ctx: 'Ctx',
-  test_chat_stream: 'Stream',
-  test_chat_clear_title: 'Clear conversation',
-  test_chat_empty: 'Select a model and ask anything to test.',
-  test_chat_placeholder: 'Type a message...',
-  test_chat_send: 'Send',
-  test_chat_thinking: 'Thinking',
-  test_chat_role_you: 'You',
-  test_chat_role_error: 'Error',
-  test_chat_typing_indicator: '{model} is typing...',
-
-  section_environment: 'Environment',
-  env_runtime: 'Runtime',
-  env_port: 'Port',
-  env_started_at: 'Started At',
-  env_ss_mode: 'SS Mode',
-  ss_mode_on: 'On',
-  ss_mode_off: 'Off',
-  env_sleev: 'Sleev (compress)',
-  env_wallpaper: 'Wallpaper',
-  wp_none: 'None',
-  wp_bing: 'Bing',
-  wp_wallhaven: 'Wallhaven',
-  wp_freegen: 'AI (FreeGen)',
-  freegen_prompt: 'AI (FreeGen) Prompt',
-  freegen_placeholder: 'Describe your wallpaper...',
-  freegen_default: 'Default',
-  freegen_generate: 'Generate',
-  freegen_status_generating: 'Generating via FreeGen (this may take ~10-30s)...',
-  freegen_status_applied: 'Wallpaper applied.',
-  freegen_status_error_prefix: 'Error:',
-
-  modal_manage_keys: 'Manage Keys',
-  modal_add_key: 'Add New Key',
-  key_name_placeholder: 'Key name',
-  key_value_placeholder: 'UMANS API key (sk-...)',
-  btn_add_key: 'Add Key',
-  btn_close: 'Close',
-  btn_save: 'Save',
-  btn_cancel: 'Cancel',
-  btn_delete: 'Delete',
-  btn_login: 'Login',
-  btn_logout: 'Logout',
-  label_account: 'Account',
-  label_keys: 'Keys',
-  label_user_id: 'User ID',
-  label_name: 'Name',
-  label_key: 'Key',
-  label_email: 'Email',
-  status_logged_in: 'Logged in',
-  status_not_logged_in: 'Not logged in',
-  account_none: 'No API keys configured.',
-
-  modal_umans_login: 'UMANS Login',
-  label_username: 'Email',
-  username_placeholder: 'email@example.com',
-  label_password: 'Password',
-  password_placeholder: 'password',
-  btn_save_and_login: 'Save & Login',
-  login_logging_in: 'Logging in...',
-  login_logged_in: 'Logged in as {email}',
-  login_failed: 'Login failed: {error}',
-  login_error: 'Error: {error}',
-
-  modal_logout: 'Logout',
-  logout_confirm: 'Log out from UMANS account?',
-
-  overlay_translating: 'Translating',
-  overlay_translating_sub: 'Translating UI to {lang}...',
-  autotranslate_label: 'AUTOTRANSLATION',
-  forced_locale_hint: '(forced: {locale})',
-
-  toast_failed_prefix: 'Failed:',
-  toast_failed_load_config: 'Failed to load configuration',
-  toast_failed_load_keys: 'Failed to load keys',
-  toast_health_ok: 'Health OK',
-  toast_health_failed: 'Health check failed',
-  toast_connected: 'Connected! {n} models',
-  toast_connection_failed: 'Connection test failed',
-  toast_usage_refreshed: 'Usage refreshed',
-  toast_models_refreshed: 'Models refreshed',
-  toast_key_added: 'Key added',
-  toast_key_updated: 'Key updated',
-  toast_key_deleted: 'Key deleted',
-  toast_key_required: 'Key required',
-  toast_login_success: 'Login successful',
-  toast_login_failed: 'Login failed',
-  toast_logout_success: 'Logged out',
-  toast_logout_failed: 'Logout failed',
-  toast_freegen_failed: 'FreeGen generation failed: {error}',
-  toast_freegen_missing_prompt: 'Enter a FreeGen prompt',
-  toast_user_id_copied: 'User ID copied',
-  toast_copy_failed: 'Copy failed',
-  toast_translation_failed: 'Translation failed: {error}',
-  restart_confirm: 'Restart the proxy?',
-  restart_waiting: 'Restarting...',
-  restart_back_online: 'Proxy is back online!',
-  restart_timeout: 'Proxy did not come back',
-  label_no_data: 'No usage data yet',
-  toast_freegen_applied: 'FreeGen wallpaper generated!',
-  btn_edit: 'Edit',
-  label_lbl_requests_long: 'REQUESTS',
-  label_lbl_tokens_long: 'TOKENS',
-};
-
-function getI18nCachePath(locale) {
-  return path.join(__dirname, '.cache', 'i18n', `${locale}.json`);
-}
-
-function loadI18nCache(locale) {
-  const fp = getI18nCachePath(locale);
-  if (!fs.existsSync(fp)) return null;
-  try { return JSON.parse(fs.readFileSync(fp, 'utf8')); }
-  catch (e) { return null; }
-}
-
-function saveI18nCache(locale, data) {
-  const fp = getI18nCachePath(locale);
-  const dir = path.dirname(fp);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(fp, JSON.stringify(data, null, 2));
-}
-
-function splitI18nForBatch(items, batchSize) {
-  const out = [];
-  for (let i = 0; i < items.length; i += batchSize) out.push(items.slice(i, i + batchSize));
-  return out;
-}
-
-function parseI18nBatchResponse(text, expectedKeys) {
-  const result = {};
-  const lines = text.split(/\r?\n/);
-  const byIdx = new Map();
-  for (const ln of lines) {
-    const trimmed = ln.trim();
-    if (!trimmed) continue;
-    const sepIdx = trimmed.indexOf('|');
-    if (sepIdx <= 0) continue;
-    const numStr = trimmed.slice(0, sepIdx).replace(/[^0-9]/g, '');
-    if (!numStr) continue;
-    const idx = parseInt(numStr, 10);
-    if (Number.isNaN(idx) || idx < 1) continue;
-    let value = trimmed.slice(sepIdx + 1).trim();
-    if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
-    if (value) byIdx.set(idx, value);
-  }
-  for (let i = 0; i < expectedKeys.length; i++) {
-    const key = expectedKeys[i];
-    const idx = i + 1;
-    if (byIdx.has(idx)) result[key] = byIdx.get(idx);
-    else result[key] = I18N_STRINGS[key];
-  }
-  return result;
-}
-
-async function callUmansFlashTranslate(promptText) {
-  const apiKey = config?.apiKey || config?.keys?.[0]?.key || '';
-  if (!apiKey) throw new Error('no api key configured for translation');
-  const baseURL = (config?.upstreamBaseURL || UMANS_API_BASE).replace(/\/+$/, '');
-  const requestURL = `${baseURL}/chat/completions`;
-  const body = {
-    model: 'umans-flash',
-    messages: [
-      { role: 'system', content: 'You are a precise UI translator. Translate each numbered line into the requested target language. Preserve placeholders like {model}, {name}, {time}, {user}, {email}, {n}, {p}, {m}, {lang}, {locale}, {error} exactly. Keep short labels concise. Output one translation per line in the format NUMBER|TRANSLATION and nothing else.' },
-      { role: 'user', content: promptText },
-    ],
-    temperature: 0.2,
-    stream: false,
-  };
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 120000);
-  try {
-    const resp = await fetch(requestURL, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-      agent: UPSTREAM_AGENT,
-    });
-    clearTimeout(timer);
-    if (!resp.ok) {
-      const errText = await resp.text();
-      throw new Error(`upstream ${resp.status}: ${errText}`);
-    }
-    const data = await resp.json();
-    const content = data?.choices?.[0]?.message?.content;
-    if (!content || typeof content !== 'string') throw new Error('no translation content returned');
-    return content;
-  } catch (e) {
-    clearTimeout(timer);
-    throw e;
-  }
-}
-
-function buildTranslatePrompt(locale, entries) {
-  const lines = entries.map(([key, value], i) => `${i + 1}|${value}`).join('\n');
-  return `You are translating UI strings of a software dashboard to ${locale}.
-
-For each numbered line, output the translation in EXACTLY this format:
-NUMBER|TRANSLATION
-
-Rules:
-- Keep ALL placeholders exactly as written: {model}, {name}, {time}, {user}, {email}, {n}, {p}, {m}, {lang}, {locale}, {error}
-- Keep product names (UMANS, FreeGen) and technical terms (API, URL, HTTP, SS Mode) untranslated where idiomatic
-- Keep short labels concise (button labels = 1-2 words in target language)
-- Preserve capitalization style of the source
-- Do NOT add numbering, commentary, or extra lines
-- Output one line per input line, in the same order, from 1 to ${entries.length}
-- Translate ALL ${entries.length} lines, even if some are similar
-
-Input:\n${lines}`;
-}
-
-const I18N_TRANSLATE_MAX_RETRIES = 3;
-const I18N_TRANSLATE_RETRY_DELAY_MS = 5000;
-
-function isRetryableTranslateError(err) {
-  const msg = err?.message || String(err);
-  if (/upstream 5\d\d/i.test(msg)) return true;
-  if (/upstream 429/i.test(msg)) return true;
-  if (/fetch failed|aborted|network|ECONNRESET|ETIMEDOUT|socket hang up/i.test(msg)) return true;
-  return false;
-}
-
-async function callUmansFlashTranslateWithRetry(promptText) {
-  let lastErr;
-  for (let attempt = 1; attempt <= I18N_TRANSLATE_MAX_RETRIES; attempt++) {
-    try {
-      return await callUmansFlashTranslate(promptText);
-    } catch (e) {
-      lastErr = e;
-      const msg = e?.message || String(e);
-      if (!isRetryableTranslateError(e) || attempt === I18N_TRANSLATE_MAX_RETRIES) throw e;
-      const delay = I18N_TRANSLATE_RETRY_DELAY_MS * attempt;
-      console.log(`[i18n] Translate attempt ${attempt}/${I18N_TRANSLATE_MAX_RETRIES} failed (${msg.slice(0, 160)}), retrying in ${delay}ms`);
-      await new Promise((r) => setTimeout(r, delay));
-    }
-  }
-  throw lastErr;
-}
-
-async function translateCatalogForLocale(locale) {
-  const entries = Object.entries(I18N_STRINGS);
-  const BATCH_SIZE = 100;
-  const batches = splitI18nForBatch(entries, BATCH_SIZE);
-  const merged = {};
-  for (let b = 0; b < batches.length; b++) {
-    const batch = batches[b];
-    const promptText = buildTranslatePrompt(locale, batch);
-    const expectedKeys = batch.map(([k]) => k);
-    const respText = await callUmansFlashTranslateWithRetry(promptText);
-    const parsed = parseI18nBatchResponse(respText, expectedKeys);
-    Object.assign(merged, parsed);
-    console.log(`[i18n] Translated batch ${b + 1}/${batches.length} for ${locale} (${batch.length} strings)`);
-  }
-  return { locale, generated_at: new Date().toISOString(), source: 'umans-flash', strings: merged };
-}
-
-async function ensureI18nForLocale(locale) {
-  if (!locale || locale === 'en') return { locale: 'en', source: 'builtin', generated_at: null, strings: I18N_STRINGS };
-  const apiKey = config?.apiKey || config?.keys?.[0]?.key || '';
-  if (!apiKey) {
-    console.log('[i18n] No API key, falling back to English');
-    return { locale: 'en', source: 'builtin', generated_at: null, strings: I18N_STRINGS };
-  }
-  const cached = loadI18nCache(locale);
-  if (cached && cached.strings) return cached;
-  console.log(`[i18n] Generating translations for locale=${locale}...`);
-  try {
-    const result = await translateCatalogForLocale(locale);
-    saveI18nCache(locale, result);
-    console.log(`[i18n] Cached ${Object.keys(result.strings).length} strings for ${locale}`);
-    return result;
-  } catch (e) {
-    console.error(`[i18n] Translation failed for ${locale}: ${e.message}`);
-    return { locale: 'en', source: 'builtin', generated_at: null, strings: I18N_STRINGS };
-  }
-}
-
-function getDashboardLocale(reqUrl) {
-  if (config?.locale) {
-    const forced = String(config.locale).toLowerCase().split(/[-_]/)[0].slice(0, 8);
-    if (forced) return forced;
-  }
-  const nav = (reqUrl.searchParams.get('nav') || '').toLowerCase().split(/[-_]/)[0];
-  if (nav) return nav;
-  const queryLocale = reqUrl.searchParams.get('locale');
-  if (queryLocale) return String(queryLocale).toLowerCase().split(/[-_]/)[0].slice(0, 8);
-  return 'en';
-}
-
-function buildI18nBundle(locale) {
-  if (!locale || locale === 'en') {
-    return { locale: 'en', source: 'builtin', generated_at: null, strings: I18N_STRINGS };
-  }
-  const cached = loadI18nCache(locale);
-  if (cached && cached.strings) return cached;
-  return { locale, source: 'pending', generated_at: null, strings: I18N_STRINGS };
-}
-
-async function handleI18n(req, res) {
-  if (req.method !== 'GET') { writeOpenAIError(res, 405, 'method not allowed', 'invalid_request_error', ''); return; }
-  const url = new URL(req.url, 'http://localhost');
-  const hasKey = !!(config?.apiKey || config?.keys?.some(k => k.key));
-  const forcedLocale = config?.locale ? String(config.locale).toLowerCase().split(/[-_]/)[0].slice(0, 8) : null;
-  if (url.searchParams.get('config') === '1') {
-    const nav = getDashboardLocale(url);
-    writeJSON(res, 200, { has_key: hasKey, forced_locale: forcedLocale, fallback_locale: forcedLocale || (hasKey ? nav || 'en' : 'en') });
-    return;
-  }
-  const locale = getDashboardLocale(url);
-  if (!hasKey || locale === 'en') {
-    writeJSON(res, 200, { ...buildI18nBundle('en'), has_key: hasKey, forced_locale: forcedLocale, fallback_locale: 'en' });
-    return;
-  }
-  const bundle = url.searchParams.get('generate') === '1'
-    ? await ensureI18nForLocale(locale)
-    : buildI18nBundle(locale);
-  writeJSON(res, 200, { ...bundle, has_key: true, forced_locale: forcedLocale, fallback_locale: locale });
 }
 
 let usageCache = { data: null, time: 0, ttl: 5 * 60 * 1000 };
@@ -1818,18 +1464,30 @@ function readBodyText(body) {
 
 function pipeBodyToResponse(body, res) {
   let closed = false;
+  let finished = false;
+  let paused = false;
   let cleanup = null;
-  const onClose = () => { closed = true; if (cleanup) cleanup(); };
+  const onClose = () => { closed = true; finish(); };
   res.on('close', onClose);
+
+  function finish() {
+    if (finished) return;
+    finished = true;
+    res.removeListener('close', onClose);
+    if (cleanup) cleanup();
+  }
 
   function safeWrite(chunk) {
     if (!closed) {
       try {
         const ok = res.write(chunk);
-        if (!ok && cleanup && typeof body.pipe === 'function') {
+        if (!ok && cleanup && typeof body.pipe === 'function' && !paused) {
           // Backpressure: pause the upstream stream until res drains.
+          // The `paused` guard prevents accumulating duplicate `drain`
+          // listeners when several writes return false in a row.
+          paused = true;
           body.pause();
-          res.once('drain', () => { try { body.resume(); } catch {} });
+          res.once('drain', () => { paused = false; try { body.resume(); } catch {} });
         }
       } catch (e) { closed = true; }
     }
@@ -1845,21 +1503,21 @@ function pipeBodyToResponse(body, res) {
     return new Promise((resolve) => {
       cleanup = () => { try { body.destroy(); } catch {} };
       body.on('data', chunk => safeWrite(chunk));
-      body.on('end', () => { safeEnd(); resolve(); });
-      body.on('error', () => { safeEnd(); resolve(); });
+      body.on('end', () => { safeEnd(); finish(); resolve(); });
+      body.on('error', () => { safeEnd(); finish(); resolve(); });
     });
   }
   return new Promise((resolve) => {
     const reader = body.getReader();
     cleanup = () => { try { reader.cancel(); } catch {} };
     function pump() {
-      if (closed) { resolve(); return; }
+      if (closed) { finish(); resolve(); return; }
       reader.read().then(({ done, value }) => {
-        if (closed) { resolve(); return; }
-        if (done) { safeEnd(); resolve(); return; }
+        if (closed) { finish(); resolve(); return; }
+        if (done) { safeEnd(); finish(); resolve(); return; }
         safeWrite(value);
         pump();
-      }).catch(() => { safeEnd(); resolve(); });
+      }).catch(() => { safeEnd(); finish(); resolve(); });
     }
     pump();
   });
@@ -2038,7 +1696,7 @@ function readBody(req) {
       received += chunk.length;
       if (received > MAX_BODY_SIZE) {
         req.pause();
-        if (!settled) { settled = true; reject(new Error('request body too large')); }
+        if (!settled) { settled = true; reject(new Error('request body too large')); req.destroy(); }
         return;
       }
       chunks.push(chunk);
@@ -2249,7 +1907,7 @@ async function proxyAnthropicRequest(res, payload, requestedModel, writeError, w
 
   if (session.requestCount === 1) {
     const firstPrompt = extractUserPrompt(payload);
-    console.log(`${reqStart} [Session#${sessNum}>${slot.name}]-[anthropic:${requestedModel}]-first-prompt: ${firstPrompt}`);
+    console.log(`${reqStart} [Session#${sessNum}>${slot.name}]-[anthropic:${requestedModel}]-first-prompt: ${firstPrompt.substring(0, 80)}`);
   } else {
     const promptPreview = extractUserPrompt(payload).substring(0, 80);
     console.log(`${reqStart} [Session#${sessNum}>${slot.name}]-[anthropic:${requestedModel}]-${promptPreview}`);
@@ -2374,7 +2032,7 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
   const promptPreview = userPrompt.substring(0, 80);
 
   if (session.requestCount === 1) {
-    console.log(`${reqStart} [Session#${sessNum}>${slot.name}]-[${requestedModel}]-first-prompt: ${userPrompt}`);
+    console.log(`${reqStart} [Session#${sessNum}>${slot.name}]-[${requestedModel}]-first-prompt: ${userPrompt.substring(0, 80)}`);
   }
 
   stripReasoningContent(payload);
@@ -2597,8 +2255,6 @@ async function handleRequest(req, res) {
     return;
   }
 
-  if (pathname === '/api/i18n') { await handleI18n(req, res); return; }
-
   if (pathname === '/api/config') {
     if (req.method === 'GET') {
       const safeConfig = {
@@ -2625,10 +2281,15 @@ async function handleRequest(req, res) {
       try {
         const body = await readBody(req);
         const newConfig = JSON.parse(body);
+        let restartRequired = false;
         if (newConfig.apiKey) config.apiKey = newConfig.apiKey;
         if (newConfig.apiKeys) config.apiKeys = newConfig.apiKeys;
-  if (newConfig.listenAddr) config.listenAddr = newConfig.listenAddr;
-  // enabledModels is obsolete: the model list now comes from UMANS catalog.
+  if (newConfig.listenAddr) {
+    const prevAddr = config.listenAddr;
+    config.listenAddr = newConfig.listenAddr;
+    if (prevAddr !== newConfig.listenAddr) restartRequired = true;
+  }
+  // DEPRECATED: enabledModels is obsolete; model list comes from UMANS catalog
   if (Array.isArray(newConfig.enabledModels)) config.enabledModels = newConfig.enabledModels;
   if (newConfig.modelDisplayNames && typeof newConfig.modelDisplayNames === 'object') config.modelDisplayNames = newConfig.modelDisplayNames;
         if (newConfig.wallpaperSource !== undefined) config.wallpaperSource = newConfig.wallpaperSource;
@@ -2647,7 +2308,7 @@ async function handleRequest(req, res) {
         }
         debouncedSaveConfig(config);
         debouncedSetupOpencodeConfig();
-        writeJSON(res, 200, { success: true });
+        writeJSON(res, 200, restartRequired ? { success: true, restartRequired: true } : { success: true });
       }
       catch (e) { writeJSON(res, 400, { error: e.message }); }
       return;
@@ -2806,7 +2467,7 @@ async function handleRequest(req, res) {
         has_token: !!t.key,
         has_session: !!t.session,
       }));
-      writeJSON(res, 200, { keys: config.keys || [], safe });
+      writeJSON(res, 200, { safe });
       return;
     }
     if (req.method === 'POST') {
@@ -2820,7 +2481,7 @@ async function handleRequest(req, res) {
           keyPool = new KeyPool(config.keys.filter(k => k.key));
           debouncedSaveConfig(config);
           debouncedSetupOpencodeConfig();
-          writeJSON(res, 200, { success: true, keys: config.keys });
+          writeJSON(res, 200, { success: true });
         } else if (data.action === 'update') {
           if (typeof data.index !== 'number' || !config.keys || !config.keys[data.index]) { writeJSON(res, 404, { error: 'Key not found' }); return; }
           if (data.name !== undefined) config.keys[data.index].name = data.name;
@@ -2829,7 +2490,7 @@ async function handleRequest(req, res) {
           keyPool = new KeyPool(config.keys.filter(k => k.key));
           debouncedSaveConfig(config);
           debouncedSetupOpencodeConfig();
-          writeJSON(res, 200, { success: true, keys: config.keys });
+          writeJSON(res, 200, { success: true });
         } else if (data.action === 'delete') {
           if (typeof data.index !== 'number' || !config.keys || !config.keys[data.index]) { writeJSON(res, 404, { error: 'Key not found' }); return; }
           config.keys.splice(data.index, 1);
@@ -2838,7 +2499,7 @@ async function handleRequest(req, res) {
           keyPool = new KeyPool(config.keys.filter(k => k.key));
           debouncedSaveConfig(config);
           debouncedSetupOpencodeConfig();
-          writeJSON(res, 200, { success: true, keys: config.keys });
+          writeJSON(res, 200, { success: true });
         } else {
           writeJSON(res, 400, { error: 'Unknown action' });
         }
@@ -2895,7 +2556,8 @@ async function handleRequest(req, res) {
   }
 
   if (pathname === '/api/umans/user' && req.method === 'GET') {
-    writeJSON(res, 200, { loggedIn: true, email: '' });
+    const userId = lastConcurrency?.user_id || userInfoCache?.data?.user_id || '';
+    writeJSON(res, 200, { loggedIn: true, email: '', user_id: userId });
     return;
   }
 
@@ -3210,7 +2872,13 @@ function gracefulShutdown(signal) {
   console.log(`\n[Shutdown] ${signal} received, cleaning up...`);
   stopSleev();
   if (server) { try { server.close(); } catch {} }
-  process.exit(0);
+  const deadline = Date.now() + 5000;
+  const iv = setInterval(() => {
+    if (activeRequests <= 0 || Date.now() >= deadline) {
+      clearInterval(iv);
+      process.exit(0);
+    }
+  }, 100);
 }
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
