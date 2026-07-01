@@ -106,7 +106,7 @@
               <span id="planBadge" class="badge bg-primary" style="font-size:0.7rem;font-weight:600;border:1px solid rgba(102,126,234,0.6);box-shadow:0 0 10px rgba(102,126,234,0.4)"></span>
             </div>
             <div class="card-body">
-              <div class="stat-grid mb-2">
+              <div class="stat-grid mb-2" id="usageStatGrid">
                 <div>
                   <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:#32CD32"><div class="stats-value" id="totalRequests">--</div><div class="stats-label">Requests</div></div></div>
                 </div>
@@ -117,7 +117,6 @@
                   <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:#0d6efd"><div class="stats-value" id="cachedPct">--</div><div class="stats-label">Cached %</div></div></div>
                 </div>
               </div>
-              <div id="usageDetailGrid" class="stat-grid" style="font-size:0.75rem"></div>
             </div>
           </div>
         </div>
@@ -870,7 +869,11 @@
         } else {
           document.getElementById('planBadge').style.display = 'none';
         }
-        const detailGrid = document.getElementById('usageDetailGrid');
+        const statGrid = document.getElementById('usageStatGrid');
+        // Remove previously appended detail cards (keep first 3 static)
+        while (statGrid.children.length > 3) {
+          statGrid.removeChild(statGrid.lastChild);
+        }
         const details = [];
         if (win.started_at) {
           const start = new Date(win.started_at);
@@ -881,9 +884,11 @@
         if (usage.priority && usage.priority.low) {
           details.push({label:'Priority', value: 'Low' + (usage.priority.reason ? ' (' + usage.priority.reason + ')' : ''), warn: true});
         }
-        detailGrid.innerHTML = details.map(d =>
-          `<div><div class="card stat-inline-card h-100"><div class="card-content" style="${d.color?`border-top-color:${d.color};`:''}"><div class="stats-value" style="color:${d.warn?'#fbbf24':'#fff'}">${escapeHtml(d.value)}</div><div class="stats-label">${escapeHtml(d.label)}</div></div></div></div>`
-        ).join('');
+        details.forEach(d => {
+          const div = document.createElement('div');
+          div.innerHTML = `<div class="card stat-inline-card h-100"><div class="card-content" style="${d.color?`border-top-color:${d.color};`:''}"><div class="stats-value" style="color:${d.warn?'#fbbf24':'#fff'};font-size:0.75rem">${escapeHtml(d.value)}</div><div class="stats-label">${escapeHtml(d.label)}</div></div></div>`;
+          statGrid.appendChild(div);
+        });
         layoutStatGrids();
       } catch { document.getElementById('throttledCount').textContent='--';document.getElementById('totalRequests').textContent='--';document.getElementById('cachedPct').textContent='--'; }
     }
