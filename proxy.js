@@ -1,4 +1,4 @@
-// UMANS-Proxy - v2026-06-12
+// UMANS-Dash - v2026-07-01
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -123,176 +123,6 @@ function trackConversationSession(fingerprint, session, alreadyTouched) {
   }
 }
 
-// ── Shell-command guard ─────────────────────────────────────────────────────
-// Blocks tool_calls that execute shell commands starting with "git" (case-
-// insensitive), e.g. "git clean -fd", "git reset", or wrappers like
-// "bash -c 'git status'". Works like GC3OC's tool-salvager, but installed
-// directly in the chat-completion proxy path.
-const SHELL_TOOL_NAMES = /^(bash|shell|run_command_in_terminal|execute_command|run_in_terminal|send_to_terminal|run_vscode_command|create_and_run_task|terminal)$/i;
-// Direct "git" executable, including quoted paths with spaces and "git.exe" on Windows.
-const GIT_EXECUTABLE_RE = /^(?:[\s]*["'])?(?:[a-zA-Z]:)?(?:[\\\/][^"']+)*[\\\/]?git(?:\.exe)?\b/i;
-// Simple shell wrappers: bash -c "...", cmd /c ..., powershell -Command "...", etc.
-const SHELL_WRAPPER_RE = /^(?:bash|sh|zsh|cmd|command|powershell|pwsh|fish|csh|ksh)(?:\.exe)?(?:\s+(?:\-[a-zA-Z]+|\/[a-zA-Z])+)*\s+(?:['"]|\-c\s+|\/c\s+)/i;
-// Common git subcommands; used to avoid false positives when "git" is just a word argument.
-const GIT_SUBCOMMAND_RE = /\b(git)\s+(?:add|commit|push|pull|clone|fetch|merge|rebase|reset|checkout|clean|rm|mv|status|log|diff|branch|tag|cherry|revert|stash|bisect|blame|init|remote|config|submodule|sparse|worktree|reflog|show|describe|rev|ls|cat)\b/i;
-
-function isGitCommand(cmd) {
-  if (typeof cmd !== 'string' || !cmd.trim()) return false;
-  const trimmed = cmd.trim();
-  if (GIT_EXECUTABLE_RE.test(trimmed)) return true;
-  if (SHELL_WRAPPER_RE.test(trimmed) && GIT_SUBCOMMAND_RE.test(trimmed)) return true;
-  return false;
-}
-
-function sanitizeShellToolCall(tc) {
-  if (!tc || !tc.function) return tc;
-  if (!SHELL_TOOL_NAMES.test(tc.function.name || '')) return tc;
-  let args;
-  try {
-    args = JSON.parse(tc.function.arguments || '{}');
-  } catch {
-    return tc;
-  }
-  const cmd = args.command;
-  if (!isGitCommand(cmd)) return tc;
-
-  const blockedMsg = 'echo "BLOCKED: git commands are disabled by proxy policy"';
-  console.log(`[ShellGuard] blocked ${tc.function.name}: ${cmd.substring(0, 200)}`);
-  return {
-    ...tc,
-    function: {
-      ...tc.function,
-      arguments: JSON.stringify({ ...args, command: blockedMsg }),
-    },
-  };
-}
-
-function sanitizeChatCompletionResponse(body) {
-  if (!body || typeof body !== 'object') return body;
-  if (!Array.isArray(body.choices)) return body;
-  for (const choice of body.choices) {
-    const msg = choice.message;
-    if (!msg || !Array.isArray(msg.tool_calls)) continue;
-    msg.tool_calls = msg.tool_calls.map(sanitizeShellToolCall);
-  }
-  return body;
-}
-
-// ── SSE stream sanitizer ──────────────────────────────────────────────────
-// Buffers an OpenAI-style streaming response, assembles partial tool_calls,
-// runs the shell guard, and re-emits sanitized SSE events. We accept the small
-// latency trade-off because agent tool-call streams are short, and rewriting
-// partial tool_call argument chunks mid-stream is fragile.
-function parseSseEvents(text) {
-  const events = [];
-  let currentEvent = null;
-  for (const line of text.split(/\r?\n/)) {
-    if (line === '') {
-      if (currentEvent) { events.push(currentEvent); currentEvent = null; }
-    } else if (line.startsWith('event:')) {
-      if (!currentEvent) currentEvent = { data: '' };
-      currentEvent.event = line.slice(6).trim();
-    } else if (line.startsWith('data:')) {
-      if (!currentEvent) currentEvent = { data: '' };
-      // Preserve newlines inside data by replacing literal "data:" lines
-      if (line === 'data:') {
-        currentEvent.data += '\n';
-      } else {
-        currentEvent.data += line.slice(5).trimStart() + '\n';
-      }
-    } else if (line.startsWith('id:')) {
-      if (!currentEvent) currentEvent = { data: '' };
-      currentEvent.id = line.slice(3).trim();
-    } else if (line.startsWith('retry:')) {
-      if (!currentEvent) currentEvent = { data: '' };
-      currentEvent.retry = line.slice(6).trim();
-    }
-  }
-  if (currentEvent) events.push(currentEvent);
-  for (const e of events) e.data = e.data.replace(/\n$/, '');
-  return events;
-}
-
-function serializeSseEvents(events) {
-  return events.map((e) => {
-    let out = [];
-    if (e.event) out.push(`event: ${e.event}`);
-    if (e.id) out.push(`id: ${e.id}`);
-    if (e.retry) out.push(`retry: ${e.retry}`);
-    if (e.data !== undefined && e.data !== null) {
-      for (const line of String(e.data).split(/\r?\n/)) {
-        out.push(`data: ${line}`);
-      }
-    }
-    out.push('');
-    return out.join('\n');
-  }).join('\n') + '\n';
-}
-
-function sanitizeSseResponse(text) {
-  const events = parseSseEvents(text);
-  const accum = {};
-  for (const e of events) {
-    if (e.event === 'ping' || !e.data) continue;
-    let obj;
-    try { obj = JSON.parse(e.data); } catch { continue; }
-    const delta = obj.choices?.[0]?.delta;
-    if (!delta?.tool_calls) continue;
-    for (const tc of delta.tool_calls) {
-      const idx = tc.index ?? 0;
-      if (!accum[idx]) accum[idx] = { index: idx, id: '', type: 'function', function: { name: '', arguments: '' } };
-      const a = accum[idx];
-      if (tc.id) a.id = tc.id;
-      if (tc.type) a.type = tc.type;
-      if (tc.function?.name) a.function.name += tc.function.name;
-      if (tc.function?.arguments != null) a.function.arguments += tc.function.arguments;
-    }
-  }
-  const indices = Object.keys(accum).map(Number).sort((a, b) => a - b);
-  const originalTools = indices.map(i => accum[i]);
-  const sanitizedTools = originalTools.map(sanitizeShellToolCall);
-  let anyBlocked = false;
-  for (let i = 0; i < sanitizedTools.length; i++) {
-    if (sanitizedTools[i] !== originalTools[i]) { anyBlocked = true; break; }
-  }
-  if (!anyBlocked) return text;
-
-  // Replace blocked tool call argument chunks with the final blocked command.
-  const firstEmitted = new Set();
-  const outEvents = [];
-  for (const e of events) {
-    if (e.event === 'ping' || !e.data) { outEvents.push(e); continue; }
-    let obj;
-    try { obj = JSON.parse(e.data); } catch { outEvents.push(e); continue; }
-    const delta = obj.choices?.[0]?.delta;
-    const toolCalls = delta?.tool_calls;
-    if (!Array.isArray(toolCalls)) { outEvents.push(e); continue; }
-    let modified = false;
-    for (const tc of toolCalls) {
-      const idx = tc.index ?? 0;
-      const sanitized = sanitizedTools[indices.indexOf(idx)];
-      if (!sanitized || sanitized === originalTools[indices.indexOf(idx)] || !tc.function) continue;
-      if (!firstEmitted.has(idx)) {
-        tc.function.name = sanitized.function.name;
-        tc.function.arguments = sanitized.function.arguments;
-        firstEmitted.add(idx);
-      } else {
-        // This and any further args chunks for this tool become no-ops.
-        tc.function.arguments = '';
-      }
-      modified = true;
-    }
-    if (modified) {
-      // Remove tool_call entries that have no payload (empty trailing chunks).
-      delta.tool_calls = toolCalls.filter(tc => tc.id || tc.function?.name || tc.function?.arguments);
-      outEvents.push({ ...e, data: JSON.stringify(obj) });
-    } else {
-      outEvents.push(e);
-    }
-  }
-  return serializeSseEvents(outEvents);
-}
-
 // ── Anthropic error helpers ───────────────────────────────────────────────
 
 function writeAnthropicError(res, statusCode, message, errorType) {
@@ -400,8 +230,11 @@ function extractUserPrompt(payload) {
   return msgText(user).replace(/^\[[^\]]+\]\s*/, '');
 }
 
-class ResponseCache {
-  constructor(maxSize = 100, ttlMs = 60000) {
+// ── Image Handoff Cache ──────────────────────────────────────────────────
+// Caches image descriptions from the vision handoff model so that repeated
+// images in evolving contexts don't trigger redundant upstream calls.
+class ImageHandoffCache {
+  constructor(maxSize = 50, ttlMs = 24 * 60 * 60 * 1000) {
     this.maxSize = maxSize;
     this.ttlMs = ttlMs;
     this._map = new Map();
@@ -417,6 +250,7 @@ class ResponseCache {
       this.misses++;
       return null;
     }
+    // LRU: move to end
     this._map.delete(key);
     this._map.set(key, entry);
     this.hits++;
@@ -435,18 +269,10 @@ class ResponseCache {
     return { size: this._map.size, maxSize: this.maxSize, ttlMs: this.ttlMs, hits: this.hits, misses: this.misses, evictions: this.evictions };
   }
   clear() { this._map.clear(); this.hits = 0; this.misses = 0; this.evictions = 0; }
-  get enabled() { return this.maxSize > 0 && this.ttlMs > 0; }
+  resize(maxSize, ttlMs) { this.maxSize = maxSize; this.ttlMs = ttlMs; }
 }
 
-function cacheKey(payload, requestedModel) {
-  const parts = [requestedModel, payload.stream ? 'stream:1' : 'stream:0'];
-  if (payload.system) parts.push(typeof payload.system === 'string' ? payload.system : JSON.stringify(payload.system));
-  if (payload.messages) parts.push(JSON.stringify(payload.messages));
-  if (payload.tools) parts.push(JSON.stringify(payload.tools));
-  return crypto.createHash('md5').update(parts.join('||')).digest('hex');
-}
-
-let responseCache = new ResponseCache();
+let imageHandoffCache = new ImageHandoffCache();
 
 function loadConfig() {
   const configPath = path.join(__dirname, '.config', 'config.json');
@@ -454,12 +280,8 @@ function loadConfig() {
     LISTEN_ADDR: '127.0.0.1:8084',
     UPSTREAM_BASE_URL: UMANS_API_BASE,
     REQUEST_TIMEOUT: '15m',
-    CACHE_TTL: '60s',
-    CACHE_MAX_SIZE: 100,
-    CACHE_ENABLED: true,
     OVERRIDE_CONCURRENCY: 0,
     MAX_IMAGES: 9,
-    SHELL_TOOL_GUARD: false,
   };
   try {
     rawConfig = { ...rawConfig, ...JSON.parse(fs.readFileSync(configPath, 'utf8')) };
@@ -471,12 +293,11 @@ function loadConfig() {
   if (process.env.REQUEST_TIMEOUT) rawConfig.REQUEST_TIMEOUT = process.env.REQUEST_TIMEOUT;
   if (process.env[API_KEY_ENV_VAR]) rawConfig.API_KEY = process.env[API_KEY_ENV_VAR];
   if (process.env.API_KEYS) rawConfig.API_KEYS = process.env.API_KEYS.split(',').map(t => t.trim()).filter(Boolean);
-  if (process.env.CACHE_TTL) rawConfig.CACHE_TTL = process.env.CACHE_TTL;
-  if (process.env.CACHE_MAX_SIZE) rawConfig.CACHE_MAX_SIZE = parseInt(process.env.CACHE_MAX_SIZE);
-  if (process.env.CACHE_ENABLED) rawConfig.CACHE_ENABLED = process.env.CACHE_ENABLED !== 'false';
   if (process.env.OVERRIDE_CONCURRENCY) rawConfig.OVERRIDE_CONCURRENCY = parseInt(process.env.OVERRIDE_CONCURRENCY);
   if (process.env.MAX_IMAGES) rawConfig.MAX_IMAGES = parseInt(process.env.MAX_IMAGES);
   if (process.env.SLEEV_ENABLED !== undefined) rawConfig.SLEEV_ENABLED = process.env.SLEEV_ENABLED !== 'false';
+  if (process.env.VISION_HANDOFF_CACHE_ENABLED !== undefined) rawConfig.VISION_HANDOFF_CACHE_ENABLED = process.env.VISION_HANDOFF_CACHE_ENABLED !== 'false';
+  if (process.env.VISION_HANDOFF_CACHE_TTL) rawConfig.VISION_HANDOFF_CACHE_TTL = process.env.VISION_HANDOFF_CACHE_TTL;
 
   const requestTimeout = parseDuration(rawConfig.REQUEST_TIMEOUT);
   if (!rawConfig.LISTEN_ADDR) throw new Error('LISTEN_ADDR cannot be empty');
@@ -504,20 +325,18 @@ function loadConfig() {
     enabledModels,
     modelDisplayNames: rawConfig.MODEL_DISPLAY_NAMES || {},
     keys,
-    cacheTtl: parseDuration(rawConfig.CACHE_TTL || '60s') || 60000,
-    cacheMaxSize: Math.max(0, rawConfig.CACHE_MAX_SIZE || 100),
-    cacheEnabled: rawConfig.CACHE_ENABLED !== false,
     wallpaperSource: rawConfig.wallpaperSource || 'freegen',
     freegenPrompt: rawConfig.FREEGEN_PROMPT || 'epic cinematic landscape, mountains at sunset, vibrant colors, ultra detailed, 16:9 wallpaper',
     overrideConcurrency: Math.max(0, rawConfig.OVERRIDE_CONCURRENCY || 0),
     maxImages: Math.max(1, rawConfig.MAX_IMAGES || 9),
     disabledModels: Array.isArray(rawConfig.DISABLED_MODELS) ? rawConfig.DISABLED_MODELS : [],
     locale: rawConfig.LOCALE || null,
-    visionHandoffEnabled: rawConfig.VISION_HANDOFF_ENABLED !== false,
+    visionHandoffEnabled: rawConfig.VISION_HANDOFF_ENABLED === true,
     visionHandoffModel: rawConfig.VISION_HANDOFF_MODEL || 'umans-coder',
     visionHandoffPrompt: rawConfig.VISION_HANDOFF_PROMPT || '',
+    visionHandoffCacheEnabled: rawConfig.VISION_HANDOFF_CACHE_ENABLED === true,
+    visionHandoffCacheTtl: parseDuration(rawConfig.VISION_HANDOFF_CACHE_TTL || '24h') || (24 * 60 * 60 * 1000),
     sleevEnabled: rawConfig.SLEEV_ENABLED === true,
-    shellToolGuard: rawConfig.SHELL_TOOL_GUARD === true,
   };
 }
 
@@ -556,20 +375,18 @@ function saveConfig(cfg) {
     KEYS: (cfg.keys || []).filter(k => k && (k.key || k.session)).map(k => ({ name: k.name || 'Default', key: k.key || '', session: k.session || '' })),
     ENABLED_MODELS: cfg.enabledModels,
     MODEL_DISPLAY_NAMES: cfg.modelDisplayNames || {},
-    CACHE_TTL: `${(cfg.cacheTtl || 60000) / 1000}s`,
-    CACHE_MAX_SIZE: cfg.cacheMaxSize || 100,
-    CACHE_ENABLED: cfg.cacheEnabled !== false,
     wallpaperSource: cfg.wallpaperSource || 'freegen',
     FREEGEN_PROMPT: cfg.freegenPrompt || 'epic cinematic landscape, mountains at sunset, vibrant colors, ultra detailed, 16:9 wallpaper',
     OVERRIDE_CONCURRENCY: cfg.overrideConcurrency || 0,
     MAX_IMAGES: cfg.maxImages || 9,
     DISABLED_MODELS: cfg.disabledModels || [],
     LOCALE: cfg.locale || null,
-    VISION_HANDOFF_ENABLED: cfg.visionHandoffEnabled !== false,
+    VISION_HANDOFF_ENABLED: cfg.visionHandoffEnabled === true,
     VISION_HANDOFF_MODEL: cfg.visionHandoffModel || 'umans-coder',
     VISION_HANDOFF_PROMPT: cfg.visionHandoffPrompt || '',
+    VISION_HANDOFF_CACHE_ENABLED: cfg.visionHandoffCacheEnabled === true,
+    VISION_HANDOFF_CACHE_TTL: cfg.visionHandoffCacheTtl || (24 * 60 * 60 * 1000),
     SLEEV_ENABLED: cfg.sleevEnabled === true,
-    SHELL_TOOL_GUARD: cfg.shellToolGuard === true,
   }, null, 2));
 }
 
@@ -584,7 +401,7 @@ function debouncedSaveConfig(cfg) {
 
 // --- i18n: UI string catalog for dashboard translation ---
 const I18N_STRINGS = {
-  app_title: 'UMANS Proxy',
+  app_title: 'UMANS Dash',
   status_checking: 'Checking...',
   status_online: 'Online',
   status_offline: 'Offline',
@@ -948,11 +765,39 @@ async function handleI18n(req, res) {
 }
 
 let usageCache = { data: null, time: 0, ttl: 5 * 60 * 1000 };
+let usageHistoryCache = { data: null, time: 0, ttl: 5 * 60 * 1000 };
 let lastConcurrency = { concurrent: 0, limit: null, user_id: null };
 let throttledCount = 0;
 let throttledWindowStart = null;
 
 function bumpThrottled() { throttledCount++; }
+
+function buildHistoryCacheKey({ from, to, granularity, scope }) {
+  return crypto.createHash('md5').update(JSON.stringify({ from, to, granularity, scope })).digest('hex');
+}
+
+async function fetchUsageHistory({ from, to, granularity, scope } = {}, fresh = false) {
+  if (!config.apiKey) return { granularity, from, to, account_id: null, buckets: [] };
+  const cacheKey = buildHistoryCacheKey({ from, to, granularity, scope });
+  if (!fresh && usageHistoryCache.key === cacheKey && usageHistoryCache.data && Date.now() - usageHistoryCache.time < usageHistoryCache.ttl) {
+    return usageHistoryCache.data;
+  }
+  try {
+    const params = new URLSearchParams();
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    if (granularity) params.set('granularity', granularity);
+    if (scope) params.set('scope', scope);
+    const resp = await fetch(`${config.upstreamBaseURL}/usage/history?${params.toString()}`, {
+      headers: { 'Authorization': `Bearer ${config.apiKey}`, 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!resp.ok) return usageHistoryCache.data || { granularity, from, to, account_id: null, buckets: [] };
+    const data = await resp.json();
+    usageHistoryCache = { data, time: Date.now(), ttl: 5 * 60 * 1000, key: cacheKey };
+    return data;
+  } catch (e) { return usageHistoryCache.data || { granularity, from, to, account_id: null, buckets: [] }; }
+}
 
 async function fetchUsage(fresh = false) {
   if (!config.apiKey) return null;
@@ -1259,6 +1104,16 @@ async function analyzeImageViaHandoff(dataUri, slot, reqStart, sessNum, imageInd
   const handoffModel = config.visionHandoffModel || 'umans-coder';
   const prompt = config.visionHandoffPrompt || DEFAULT_VISION_HANDOFF_PROMPT;
 
+  // Check handoff cache first
+  if (config.visionHandoffCacheEnabled) {
+    const hash = crypto.createHash('sha256').update(dataUri).digest('hex');
+    const cached = imageHandoffCache.get(hash);
+    if (cached) {
+      console.log(`${reqStart} [Session#${sessNum}>${slot.name}]-[handoff→${handoffModel}]-image #${imageIndex + 1} cache:HIT (${cached.length} chars)`);
+      return cached;
+    }
+  }
+
   const handoffPayload = {
     model: handoffModel,
     stream: false,
@@ -1297,6 +1152,13 @@ async function analyzeImageViaHandoff(dataUri, slot, reqStart, sessNum, imageInd
     }
 
     console.log(`${reqStart} [Session#${sessNum}>${slot.name}]-[handoff→${handoffModel}]-image #${imageIndex + 1} described (${description.length} chars)`);
+
+    // Cache the description for future use
+    if (config.visionHandoffCacheEnabled) {
+      const hash = crypto.createHash('sha256').update(dataUri).digest('hex');
+      imageHandoffCache.set(hash, description);
+    }
+
     return description;
   } catch (e) {
     console.log(`${reqStart} [Session#${sessNum}>${slot.name}]-[handoff→${handoffModel}]-ERROR: ${e.message}`);
@@ -1341,7 +1203,7 @@ async function performVisionHandoff(payload, resolvedModel, slot, sessNum, reqSt
 const UPSTREAM_AGENT = new https.Agent({ keepAlive: true, keepAliveMsecs: 60000, maxSockets: 128, timeout: 300000, maxFreeSockets: 64, scheduling: 'lifo' });
 
 // ── Sleev context-compression gateway manager ──────────────────────────────
-// Topology A (Sleev in front): opencode → Sleev (compress) → UMANS-PROXY → UMANS
+// Topology A (Sleev in front): opencode → Sleev (compress) → UMANS-DASH → UMANS
 // Sleev is installed as a project dependency (package.json) and spawns a local
 // gateway daemon. First-run sign-in opens the browser for OAuth callback. The
 // proxy manages the gateway lifecycle (spawn on boot, kill on exit).
@@ -2230,8 +2092,12 @@ async function handleHealthz(req, res) {
     runtime: IS_BUN ? 'bun' : 'node',
     runtime_version: RUNTIME_VERSION,
     port: parseListenPort(config.listenAddr),
-    cache: { ...responseCache.stats, enabled: config.cacheEnabled },
     sleev: { enabled: config.sleevEnabled === true, ready: sleevState.ready, gateway: SLEEV_GATEWAY_BASE },
+    visionHandoff: {
+      enabled: config.visionHandoffEnabled === true,
+      cacheEnabled: config.visionHandoffCacheEnabled === true,
+      cache: { ...imageHandoffCache.stats },
+    },
   });
 }
 
@@ -2420,6 +2286,7 @@ async function proxyAnthropicRequest(res, payload, requestedModel, writeError, w
       if (upstreamStatus === 503) {
         keyPool.markUnhealthy(slot.index, upstreamStatus);
       }
+      if (upstreamStatus === 429 || upstreamStatus === 503) bumpThrottled();
       return;
     }
 
@@ -2511,26 +2378,6 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
   }
 
   stripReasoningContent(payload);
-
-  const cacheEnabled = config.cacheEnabled && !payload.stream;
-  let ck;
-  if (cacheEnabled) {
-    ck = cacheKey(payload, requestedModel);
-    const cached = responseCache.get(ck);
-    if (cached) {
-      console.log(`${reqStart} [${slot.name}]-[${requestedModel}]-cache:HIT ${promptPreview}`);
-      try {
-        let parsed = null;
-        try { parsed = JSON.parse(cached); } catch (e) { /* ignore */ }
-        if (parsed && config.shellToolGuard) parsed = sanitizeChatCompletionResponse(parsed);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(parsed ? JSON.stringify(parsed) : cached);
-      }
-      catch (e) { /* ignore */ }
-      return;
-    }
-  }
-
   console.log(`${reqStart} [Session#${sessNum}>${slot.name}]-[${requestedModel}]-${promptPreview}`);
 
   const resolvedModel = resolveModelId(requestedModel);
@@ -2599,52 +2446,9 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
       keyPool.markHealthy(slot.index);
       try {
         if (contentType.includes('text/event-stream')) {
-          if (config.shellToolGuard) {
-            // Buffer the SSE stream so we can sanitize any shell tool_calls before
-            // the client sees them. Tool-call argument chunks may be split, so partial
-            // interception is unsafe; full-buffering is correct and acceptable for
-            // agent tool-call streams.
-            let rawSse = '';
-            let clientGone = false;
-            const onClientClose = () => { clientGone = true; try { resp.body.destroy(); } catch {} };
-            res.on('close', onClientClose);
-            const collectData = (chunk) => { if (!clientGone) rawSse += Buffer.from(chunk).toString('utf8'); };
-            if (resp.body && typeof resp.body.pipe === 'function') {
-              await new Promise((resolve) => {
-                const onEnd = () => { cleanup(); resolve(); };
-                const onError = () => { cleanup(); try { resp.body.destroy(); } catch {} resolve(); };
-                const cleanup = () => {
-                  resp.body.removeListener('data', collectData);
-                  resp.body.removeListener('end', onEnd);
-                  resp.body.removeListener('error', onError);
-                  res.removeListener('close', onClientClose);
-                };
-                resp.body.on('data', collectData);
-                resp.body.on('end', onEnd);
-                resp.body.on('error', onError);
-              });
-            } else if (resp.body && typeof resp.body.getReader === 'function') {
-              const reader = resp.body.getReader();
-              try {
-                while (!clientGone) {
-                  const { done, value } = await reader.read();
-                  if (done) break;
-                  collectData(value);
-                }
-              } catch { try { reader.cancel(); } catch {} }
-              res.removeListener('close', onClientClose);
-            } else {
-              res.removeListener('close', onClientClose);
-            }
-            if (clientGone) return { retry: false };
-            const sanitizedSse = sanitizeSseResponse(rawSse);
-            if (!headersFlushed) res.writeHead(resp.status, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
-            try { res.end(sanitizedSse); } catch {}
-          } else {
-            // Shell tool guard disabled: pipe SSE directly to client for real-time streaming
-            if (!headersFlushed) res.writeHead(resp.status, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
-            await pipeBodyToResponse(resp.body, res);
-          }
+          // SSE: pipe directly to client for real-time streaming
+          if (!headersFlushed) res.writeHead(resp.status, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
+          await pipeBodyToResponse(resp.body, res);
         } else {
           let bodyText = await readBodyText(resp.body);
           const skipHeaders = new Set(['content-length', 'transfer-encoding', 'connection', 'keep-alive', 'content-encoding']);
@@ -2657,7 +2461,6 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
           }
           let parsed = null;
           try { parsed = JSON.parse(bodyText); } catch (e) { /* ignore */ }
-          if (parsed && config.shellToolGuard) parsed = sanitizeChatCompletionResponse(parsed);
           if (requestedStream) {
             if (!headersFlushed) res.writeHead(resp.status, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
             try { res.end(parsed ? JSON.stringify(parsed) : `data: ${JSON.stringify({ object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: bodyText }, finish_reason: 'stop' }] })}\n\n`); } catch {}
@@ -2666,9 +2469,8 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
             res.writeHead(resp.status);
             res.end(finalBody);
           }
-          const cacheBody = parsed ? JSON.stringify(parsed) : bodyText;
-          if (ck) responseCache.set(ck, cacheBody);
-          console.log(`${reqStart} [Session#${sessNum}>${slot.name}]-[${requestedModel}]-body:${cacheBody.substring(0, 800)}`);
+          const respBody = parsed ? JSON.stringify(parsed) : bodyText;
+          console.log(`${reqStart} [Session#${sessNum}>${slot.name}]-[${requestedModel}]-body:${respBody.substring(0, 800)}`);
         }
       } catch (e) { console.error(`proxy response copy failed: ${e.message}`); }
 
@@ -2701,6 +2503,7 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
       }).catch(e => console.error('failed to write errors.log:', e.message));
       if (isLast) {
         console.error(`${reqStart} [Session#${sessNum}>${slot.name}]-[${requestedModel}]-error:${resp.status}-FINAL`);
+        if (resp.status === 503 || resp.status === 429) bumpThrottled();
         writeUpstreamError(res, resp.status, errorBodyStr);
         return { retry: false };
       }
@@ -2710,6 +2513,7 @@ async function proxyChatRequest(res, payload, requestedModel, writeError, writeU
     }
 
     if (resp.status >= 500) keyPool.markUnhealthy(slot.index, resp.status);
+    if (resp.status === 429 || resp.status === 503) bumpThrottled();
     console.error(`${reqStart} [Session#${sessNum}>${slot.name}]-[${requestedModel}]-error:${resp.status}`);
     writeUpstreamError(res, resp.status, errorBodyStr);
     return { retry: false };
@@ -2803,19 +2607,16 @@ async function handleRequest(req, res) {
         apiKey: maskToken(config.apiKey),
         enabledModels: config.enabledModels,
         modelDisplayNames: config.modelDisplayNames,
-        cacheEnabled: config.cacheEnabled,
-        cacheMaxSize: config.cacheMaxSize,
-        cacheTtl: config.cacheTtl,
         overrideConcurrency: config.overrideConcurrency,
         maxImages: config.maxImages,
         wallpaperSource: config.wallpaperSource,
         freegenPrompt: config.freegenPrompt || '',
         disabledModels: config.disabledModels || [],
-        visionHandoffEnabled: config.visionHandoffEnabled !== false,
+        visionHandoffEnabled: config.visionHandoffEnabled === true,
         visionHandoffModel: config.visionHandoffModel || 'umans-coder',
         visionHandoffPrompt: config.visionHandoffPrompt || '',
+        visionHandoffCacheEnabled: config.visionHandoffCacheEnabled === true,
         sleevEnabled: config.sleevEnabled === true,
-        shellToolGuard: config.shellToolGuard === true,
       };
       writeJSON(res, 200, safeConfig);
       return;
@@ -2838,8 +2639,8 @@ async function handleRequest(req, res) {
         if (typeof newConfig.visionHandoffEnabled === 'boolean') config.visionHandoffEnabled = newConfig.visionHandoffEnabled;
         if (typeof newConfig.visionHandoffModel === 'string') config.visionHandoffModel = newConfig.visionHandoffModel.trim();
         if (typeof newConfig.visionHandoffPrompt === 'string') config.visionHandoffPrompt = newConfig.visionHandoffPrompt;
+        if (typeof newConfig.visionHandoffCacheEnabled === 'boolean') config.visionHandoffCacheEnabled = newConfig.visionHandoffCacheEnabled;
         if (typeof newConfig.sleevEnabled === 'boolean') config.sleevEnabled = newConfig.sleevEnabled;
-        if (typeof newConfig.shellToolGuard === 'boolean') config.shellToolGuard = newConfig.shellToolGuard;
         if (Array.isArray(newConfig.keys)) {
           config.keys = newConfig.keys;
           keyPool = new KeyPool(config.keys.filter(k => k.key));
@@ -3046,11 +2847,6 @@ async function handleRequest(req, res) {
     }
   }
 
-  if (pathname === '/api/cache') {
-    if (req.method === 'GET') { writeJSON(res, 200, { ...responseCache.stats, enabled: config.cacheEnabled }); return; }
-    if (req.method === 'DELETE') { responseCache.clear(); writeJSON(res, 200, { success: true, cache: responseCache.stats }); return; }
-  }
-
   // UMANS Usage endpoints
   if (pathname === '/api/umans/usage' && req.method === 'GET') {
     (async () => {
@@ -3068,7 +2864,19 @@ async function handleRequest(req, res) {
   }
 
   if (pathname === '/api/umans/usage-history' && req.method === 'GET') {
-    writeJSON(res, 200, { history: { buckets: [] } });
+    (async () => {
+      try {
+        const fresh = parsedUrl.searchParams.get('fresh') === '1';
+        const from = parsedUrl.searchParams.get('from') || undefined;
+        const to = parsedUrl.searchParams.get('to') || undefined;
+        const granularity = parsedUrl.searchParams.get('granularity') || 'day';
+        const scope = parsedUrl.searchParams.get('scope') || undefined;
+        const data = await fetchUsageHistory({ from, to, granularity, scope }, fresh);
+        writeJSON(res, 200, data);
+      } catch (e) {
+        if (!res.writableEnded) writeJSON(res, 500, { error: e.message });
+      }
+    })();
     return;
   }
 
@@ -3309,7 +3117,7 @@ async function setupOpencodeConfig() {
       const providerEntry = (() => {
         const apiKey = config.apiKeys && config.apiKeys.length > 0 ? config.apiKeys[0] : 'umans-proxy';
         if (config.sleevEnabled && sleevState.ready) {
-          // Topology A: opencode → Sleev (compress) → UMANS-PROXY → UMANS.
+          // Topology A: opencode → Sleev (compress) → UMANS-DASH → UMANS.
           // Point opencode at the Sleev gateway; tell Sleev where our proxy is.
           return {
             npm: '@ai-sdk/openai-compatible',
@@ -3366,7 +3174,7 @@ async function setupOpencodeConfig() {
         existing.compaction.prune = false;
       }
 
-      // Ensure project guidance is loaded so opencode follows UMANS-Proxy conventions
+      // Ensure project guidance is loaded so opencode follows UMANS-Dash conventions
       // (e.g. exact edit matching, using webfetch instead of websearch, etc.)
       if (!Array.isArray(existing.instructions)) existing.instructions = [];
       for (const guidance of ['AGENTS.md', 'skills.md']) {
@@ -3414,12 +3222,12 @@ let server;
 
 async function startServer(retryPort = null) {
   console.log('┌─────────────────────────────────────────────────────────────┐');
-  console.log('│  UMANS-Proxy - Starting...                                  │');
+  console.log('│  UMANS-Dash - Starting...                                   │');
   console.log('└─────────────────────────────────────────────────────────────┘');
 
   try { config = loadConfig(); } catch (e) { console.error('Failed to load config:', e.message); process.exit(1); }
 
-  responseCache = new ResponseCache(config.cacheMaxSize, config.cacheTtl);
+  imageHandoffCache.resize(50, config.visionHandoffCacheTtl);
 
   if (!config.apiKey) {
     console.log('[Warning] No API key configured. Set UMANS_API_KEY env var or add API_KEY to .config/config.json');
@@ -3482,12 +3290,11 @@ async function startServer(retryPort = null) {
   });
 
   server.listen(port, '127.0.0.1', () => {
-    console.log(`\nUMANS-Proxy on http://127.0.0.1:${port}`);
+    console.log(`\nUMANS-Dash on http://127.0.0.1:${port}`);
     console.log(`  Provider: UMANS AI`);
     console.log(`  Upstream: ${config.upstreamBaseURL}`);
     console.log(`  Key Pool: ${keyPool?.total || 0} key(s), ${keyPool?.healthyCount || 0} healthy`);
     console.log(`  Enabled Models: ${(config.enabledModels || []).length} (search & add via dashboard)`);
-    console.log(`  Response Cache: ${config.cacheEnabled ? 'enabled (' + config.cacheMaxSize + ' entries, ' + (config.cacheTtl / 1000) + 's TTL)' : 'disabled'}`);
     console.log(`  Proxy API Keys: ${config.apiKeys.length > 0 ? config.apiKeys.length + ' (auth enabled)' : 'none (open access)'}`);
     console.log(`  App Account: API key configured`);
     console.log('');

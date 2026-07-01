@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>UMANS Proxy Dashboard</title>
+  <title>UMANS Dash</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
   <style>
@@ -16,7 +16,6 @@
     .card-content { position:relative; z-index:3; border-radius:inherit; overflow:hidden; background:rgba(0,0,0,0.22); width:100%; }
     body.has-wallpaper .card-content { background:rgba(0,0,0,0.55); }
     body.has-wallpaper .stat-inline-card .card-content { background:rgba(0,0,0,0.45); }
-    body.has-wallpaper .usage-detail-item { background:rgba(0,0,0,0.45); }
     body.has-wallpaper .card-body { backdrop-filter:blur(20px)!important; -webkit-backdrop-filter:blur(20px)!important; }
     body.has-wallpaper .test-chat-header, body.has-wallpaper .pool-card { background:rgba(0,0,0,0.5); }
     .card-header { background:rgba(0,0,0,0.2)!important; border-bottom:1px solid rgba(255,255,255,0.15); font-weight:600; text-transform:uppercase; letter-spacing:0.5px; font-size:14px; color:white; padding:0.4rem 1.25rem; position:relative; z-index:4; }
@@ -41,15 +40,14 @@
     #section-actions .btn-outline-action { justify-content:flex-start; text-align:left; }
     .btn-outline-action:hover { background:rgba(255,255,255,0.15); border-color:rgba(255,255,255,0.9)!important; color:#fff!important; outline:0; }
     .btn-outline-action.active { background:rgba(50,205,50,0.2)!important; border-color:rgba(50,205,50,0.8)!important; color:#fff!important; box-shadow:0 0 0 0.15rem rgba(50,205,50,0.25)!important; }
-    .stats-value { font-size:28px; font-weight:700; color:white; text-shadow:0 0 12px rgba(102,126,234,0.3); }
+    .stats-value { font-size:1em; font-weight:700; color:white; text-shadow:0 0 12px rgba(102,126,234,0.3); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; line-height:1.2; }
+    .stat-inline-card .card-content { font-size:clamp(0.5rem, 2.5vw, 1.75rem); }
     .stats-label { font-size:11px; color:rgba(255,255,255,0.85); text-transform:uppercase; letter-spacing:1px; margin-top:4px; }
     .stat-inline-card { margin-bottom:0 !important; border:1px solid rgba(255,255,255,0.08); }
+    .stat-grid { display:grid; gap:0.5rem; }
+    .stat-grid > * { min-width:0; }
     .stat-inline-card .card-content { background:rgba(0,0,0,0.12); padding:16px 8px; text-align:center; min-height:78px; display:flex; flex-direction:column; justify-content:center; border-top:3px solid rgba(102,126,234,0.5); transition:background 0.15s ease; }
     .stat-inline-card:hover .card-content { background:rgba(255,255,255,0.05); }
-    .usage-detail-item { padding:8px 10px; background:rgba(0,0,0,0.12); border-radius:12px; border:1px solid rgba(255,255,255,0.08); border-top:2px solid rgba(102,126,234,0.35); transition:background 0.15s ease; }
-    .usage-detail-item:hover { background:rgba(255,255,255,0.05); }
-    .usage-detail-label { color:rgba(255,255,255,0.75); font-size:0.65rem; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:2px; }
-    .usage-detail-value { color:#fff; font-weight:600; font-size:0.85rem; font-variant-numeric:tabular-nums; }
     #section-models code { color:#6ea8fe; }
     .toast-container { position:fixed; top:20px; right:20px; z-index:1050; }
     .form-label { font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:0.5px; color:rgba(255,255,255,0.8); margin-bottom:6px; }
@@ -90,10 +88,9 @@
       <div class="glass-panel"></div>
       <div class="card-content px-2">
         <div class="d-flex justify-content-between align-items-center">
-          <div><h4 class="mb-0"><i class="bi bi-cloud-lightning me-2"></i><span>UMANS Proxy</span></h4></div>
+          <div><h4 class="mb-0 d-flex align-items-center gap-2"><span id="statusIndicator" class="status-indicator status-unknown"></span><span>UMANS Dash</span></h4></div>
           <div class="d-flex align-items-center gap-3">
             <span class="d-flex align-items-center gap-1" style="font-size:0.7rem;color:rgba(255,255,255,0.55)"><i class="bi bi-person-badge"></i><code class="masked-userid" id="topUserId" data-userid="" onclick="this.classList.toggle('revealed');this.textContent=this.classList.contains('revealed')?this.dataset.userid:'••••••••••••'" style="font-size:0.7rem;color:rgba(255,255,255,0.85);background:rgba(255,255,255,0.05);padding:1px 4px;border-radius:4px;word-break:break-all;cursor:pointer">••••••••••••</code></span>
-            <span><span id="statusIndicator" class="status-indicator status-unknown"></span><span id="statusText" class="fw-medium">Checking...</span></span>
           </div>
         </div>
       </div>
@@ -109,18 +106,18 @@
               <span id="planBadge" class="badge bg-primary" style="font-size:0.7rem;font-weight:600;border:1px solid rgba(102,126,234,0.6);box-shadow:0 0 10px rgba(102,126,234,0.4)"></span>
             </div>
             <div class="card-body">
-              <div class="row g-2 mb-2">
-                <div class="col-4">
-                  <div class="card stat-inline-card h-100"><div class="card-content"><div class="stats-value" id="totalRequests">--</div><div class="stats-label">Requests</div></div></div>
+              <div class="stat-grid mb-2">
+                <div>
+                  <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:#32CD32"><div class="stats-value" id="totalRequests">--</div><div class="stats-label">Requests</div></div></div>
                 </div>
-                <div class="col-4">
-                  <div class="card stat-inline-card h-100"><div class="card-content"><div class="stats-value" id="throttledCount">--</div><div class="stats-label">Throttled</div></div></div>
+                <div>
+                  <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:#dc3545"><div class="stats-value" id="throttledCount">--</div><div class="stats-label">Throttled</div></div></div>
                 </div>
-                <div class="col-4">
-                  <div class="card stat-inline-card h-100"><div class="card-content"><div class="stats-value" id="cachedPct">--</div><div class="stats-label">Cached %</div></div></div>
+                <div>
+                  <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:#0d6efd"><div class="stats-value" id="cachedPct">--</div><div class="stats-label">Cached %</div></div></div>
                 </div>
               </div>
-              <div id="usageDetailGrid" class="row g-2" style="font-size:0.75rem"></div>
+              <div id="usageDetailGrid" class="stat-grid" style="font-size:0.75rem"></div>
             </div>
           </div>
         </div>
@@ -132,17 +129,17 @@
               <span><i class="bi bi-people-fill me-2"></i><span>Current Concurrency</span></span>
             </div>
             <div class="card-body">
-              <div class="row g-2 mb-3">
-                <div class="col-3">
+              <div class="stat-grid mb-3">
+                <div>
                   <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:#32CD32"><div class="stats-value" id="concActive">--</div><div class="stats-label">Active</div></div></div>
                 </div>
-                <div class="col-3">
+                <div>
                   <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:#0d6efd"><div class="stats-value" id="concQueued">--</div><div class="stats-label">Queued</div></div></div>
                 </div>
-                <div class="col-3">
+                <div>
                   <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:#fde047"><div class="stats-value" id="concLimit">--</div><div class="stats-label">Limit</div></div></div>
                 </div>
-                <div class="col-3">
+                <div>
                   <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:#fd7e14"><div class="stats-value" id="concBurst">--</div><div class="stats-label">Burst</div></div></div>
                 </div>
               </div>
@@ -162,14 +159,79 @@
                   <div id="concurrencyUpstreamBar" style="position:absolute;top:0;left:0;height:100%;width:0%;border-radius:4px;background-image:radial-gradient(circle, rgba(255,255,255,0.7) 1.5px, transparent 1.5px);background-size:5px 5px;z-index:1;pointer-events:none;transition:width 1s ease"></div>
                 </div>
               </div>
-              <div id="concurrencyDetailGrid" class="row g-2 mt-3" style="font-size:0.75rem"></div>
+              <div id="concurrencyDetailGrid" class="stat-grid mt-3" style="font-size:0.75rem"></div>
             </div>
           </div>
         </div>
 
-        <div id="cacheStatsSection" class="mt-2" style="font-size:0.7rem;color:rgba(255,255,255,0.6);padding:0 4px">
-          <i class="bi bi-database me-1" style="opacity:0.7"></i>
-          <span id="cacheStatsText">Cache: -- hits, -- misses (-- entries)</span>
+        <div class="card" data-glass data-section="history">
+          <div class="glass-panel"></div>
+          <div class="card-content">
+            <div class="card-header collapsible-header" role="button" tabindex="0" aria-expanded="true" onclick="toggleSection('history')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection('history')}">
+              <i class="bi bi-chevron-down toggle-icon me-1"></i><i class="bi bi-clock-history me-2"></i><span>Usage History</span>
+            </div>
+            <div class="card-body collapse-section" id="section-history">
+              <div class="stat-grid mb-2">
+                <div>
+                  <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:#32CD32"><div class="stats-value" id="histTotalRequests">--</div><div class="stats-label">Requests</div></div></div>
+                </div>
+                <div>
+                  <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:#dc3545"><div class="stats-value" id="histErrorRate">--</div><div class="stats-label">Error %</div></div></div>
+                </div>
+                <div>
+                  <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:#0d6efd"><div class="stats-value" id="histCachedPct">--</div><div class="stats-label">Cached %</div></div></div>
+                </div>
+                <div>
+                  <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:#d63384"><div class="stats-value" id="histPeakConc">--</div><div class="stats-label">Peak Concurrency</div></div></div>
+                </div>
+                <div>
+                  <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:#fde047"><div class="stats-value" id="histTokensIn">--</div><div class="stats-label">Tokens In</div></div></div>
+                </div>
+                <div>
+                  <div class="card stat-inline-card h-100"><div class="card-content" style="border-top-color:#fd7e14"><div class="stats-value" id="histTokensOut">--</div><div class="stats-label">Tokens Out</div></div></div>
+                </div>
+              </div>
+              <div class="mb-2" style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start">
+                <div>
+                  <label class="form-label d-flex align-items-center gap-1" style="font-size:0.6rem;color:rgba(255,255,255,0.75);margin-bottom:2px">Range</label>
+                  <div class="btn-group" role="group" aria-label="Usage history range">
+                    <button class="btn btn-outline-action btn-hist-range" data-range="24h" onclick="setHistoryRange('24h')">24h</button>
+                    <button class="btn btn-outline-action btn-hist-range" data-range="7d" onclick="setHistoryRange('7d')">7d</button>
+                    <button class="btn btn-outline-action btn-hist-range" data-range="30d" onclick="setHistoryRange('30d')">30d</button>
+                  </div>
+                </div>
+                <div>
+                  <label class="form-label d-flex align-items-center gap-1" style="font-size:0.6rem;color:rgba(255,255,255,0.75);margin-bottom:2px">Granularity <i class="bi bi-info-circle" style="cursor:help;color:rgba(255,255,255,0.7)" data-bs-toggle="tooltip" data-bs-html="true" title="Time bucket size for the chart. 24h range auto-selects hourly buckets."></i></label>
+                  <div class="btn-group" role="group" aria-label="Usage history granularity">
+                    <button class="btn btn-outline-action btn-hist-gran" data-gran="hour" onclick="setHistoryGranularity('hour')">Hour</button>
+                    <button class="btn btn-outline-action btn-hist-gran" data-gran="day" onclick="setHistoryGranularity('day')">Day</button>
+                  </div>
+                </div>
+                <div>
+                  <label class="form-label d-flex align-items-center gap-1" style="font-size:0.6rem;color:rgba(255,255,255,0.75);margin-bottom:2px">Metric</label>
+                  <div class="btn-group" role="group" aria-label="Usage history metric">
+                    <button class="btn btn-outline-action btn-hist-metric" data-metric="requests" onclick="setHistoryMetric('requests')">Requests</button>
+                    <button class="btn btn-outline-action btn-hist-metric" data-metric="tokens" onclick="setHistoryMetric('tokens')">Tokens</button>
+                  </div>
+                </div>
+              </div>
+              <div id="historyLegendWrapper" style="display:none">
+              <label class="form-label d-flex align-items-center gap-1" style="font-size:0.6rem;color:rgba(255,255,255,0.75);margin-bottom:2px">Status legend</label>
+              <div class="mb-2" id="historyLegend" style="display:flex;flex-wrap:wrap;gap:6px;font-size:0.65rem"></div>
+              </div>
+              <div style="display:flex;align-items:stretch">
+                <div id="historyYAxis" style="display:flex;flex-direction:column;justify-content:space-between;padding:4px 4px 4px 0;text-align:right;font-size:0.5rem;color:rgba(255,255,255,0.5);font-variant-numeric:tabular-nums;min-width:36px"></div>
+                <div style="flex:1;min-width:0">
+                  <div id="historyChart" style="position:relative;display:flex;align-items:flex-end;gap:2px;height:160px;padding:4px;border-radius:8px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);cursor:pointer;overflow:hidden">
+                    <div class="w-100 text-center text-muted" style="font-size:0.75rem">No history data</div>
+                  </div>
+                  <div id="historyXAxis" style="display:flex;align-items:flex-start;height:18px;padding:2px 4px 0;gap:2px"></div>
+                </div>
+              </div>
+                <div id="historyHint" style="font-size:0.55rem;color:rgba(255,255,255,0.7);margin-top:3px;display:flex;justify-content:space-between;align-items:center"><span>Click a bar to filter the table below</span><span id="historyRowCount" style="font-size:0.55rem;color:rgba(255,255,255,0.7)"></span></div>
+              <div id="historyTableContainer" style="margin-top:10px;max-height:220px;overflow:auto"></div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -182,7 +244,7 @@
             </div>
             <div class="card-body collapse-section" id="section-quick-settings">
               <div class="mb-2">
-                <label class="form-label" style="font-size:0.7rem;color:rgba(255,255,255,0.75);margin-bottom:2px">Automatic Refresh</label>
+                <label class="form-label d-flex align-items-center gap-1" style="font-size:0.7rem;color:rgba(255,255,255,0.75);margin-bottom:2px">Automatic Refresh</label>
                 <div class="btn-group w-100" role="group" id="refreshIntervalGroup" aria-label="Automatic refresh interval">
                   <button class="btn btn-outline-action btn-refresh" data-refresh="30" onclick="setRefreshInterval('30')">30s</button>
                   <button class="btn btn-outline-action btn-refresh" data-refresh="60" onclick="setRefreshInterval('60')">1m</button>
@@ -191,7 +253,7 @@
                 </div>
               </div>
               <div class="mb-2">
-                <label class="form-label" style="font-size:0.7rem;color:rgba(255,255,255,0.75);margin-bottom:2px">Wallpaper</label>
+                <label class="form-label d-flex align-items-center gap-1" style="font-size:0.7rem;color:rgba(255,255,255,0.75);margin-bottom:2px">Wallpaper</label>
                 <div class="btn-group w-100" role="group" id="wallpaperGroup" aria-label="Wallpaper source">
                   <button class="btn btn-outline-action btn-wp" data-wp="none" onclick="setWallpaper('none')">None</button>
                   <button class="btn btn-outline-action btn-wp" data-wp="bing" onclick="setWallpaper('bing')">Bing</button>
@@ -200,13 +262,13 @@
                 </div>
               </div>
               <div class="mb-2" id="freegenPromptContainer" style="display:none">
-                <label class="form-label" style="font-size:0.65rem;color:rgba(255,255,255,0.75);margin-bottom:2px">AI (FreeGen) Prompt</label>
+                <label class="form-label d-flex align-items-center gap-1" style="font-size:0.7rem;color:rgba(255,255,255,0.75);margin-bottom:2px">AI (FreeGen) Prompt</label>
                 <div class="input-group input-group-sm" style="gap:4px;margin-bottom:4px">
                    <input type="text" class="form-control form-control-sm" id="freegenPromptInput" placeholder="Describe your wallpaper..." style="font-size:0.7rem;background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.2);color:white">
                    <button class="btn btn-outline-action" style="font-size:0.6rem;padding:0.2rem 0.5rem;white-space:nowrap" onclick="useDefaultFreegenPrompt()" title="Load default prompt">Default</button>
                     <button class="btn btn-success" style="font-size:0.65rem;padding:0.2rem 0.5rem;white-space:nowrap" id="freegenGenerateBtn" onclick="generateFreegenWallpaper()">Generate</button>
                  </div>
-                 <div id="freegenStatus" style="font-size:0.65rem;color:rgba(255,255,255,0.55);min-height:1rem"></div>
+                 <div id="freegenStatus" style="font-size:0.65rem;color:rgba(255,255,255,0.55);margin-top:2px"></div>
               </div>
               <div class="mb-2">
                 <label class="form-label d-flex align-items-center gap-1" style="font-size:0.7rem;color:rgba(255,255,255,0.75);margin-bottom:2px">
@@ -217,18 +279,28 @@
                   <button class="btn btn-outline-action btn-sleev" data-sleev="off" onclick="toggleSleev(false)">Off</button>
                   <button class="btn btn-outline-action btn-sleev" data-sleev="on" onclick="toggleSleev(true)">On</button>
                 </div>
-                <div id="sleevStatus" style="font-size:0.6rem;color:rgba(255,255,255,0.75);min-height:0.8rem;margin-top:2px"></div>
+                <div id="sleevStatus" style="font-size:0.6rem;color:rgba(255,255,255,0.75);margin-top:2px"></div>
               </div>
               <div class="mb-2">
                 <label class="form-label d-flex align-items-center gap-1" style="font-size:0.7rem;color:rgba(255,255,255,0.75);margin-bottom:2px">
-                  Git Guard
-                  <i class="bi bi-info-circle" style="cursor:help;color:rgba(255,255,255,0.7)" data-bs-toggle="tooltip" data-bs-html="true" title="Blocks git commands in LLM tool_call responses by rewriting them to a harmless echo. Enabling this disables real-time streaming on the OpenAI endpoint — the full response is buffered before sending to the client."></i>
+                  Vision Handoff
+                  <i class="bi bi-info-circle" style="cursor:help;color:rgba(255,255,255,0.7)" data-bs-toggle="tooltip" data-bs-html="true" title="For models that cannot process images natively, the proxy delegates image analysis to a vision-capable handoff model and inserts the text description into the context."></i>
                 </label>
-                <div class="btn-group w-100" role="group" id="gitGuardGroup" aria-label="Git guard">
-                  <button class="btn btn-outline-action btn-gitguard" data-gitguard="off" onclick="toggleGitGuard(false)">Off</button>
-                  <button class="btn btn-outline-action btn-gitguard" data-gitguard="on" onclick="toggleGitGuard(true)">On</button>
+                <div class="btn-group w-100" role="group" id="visionHandoffGroup" aria-label="Vision handoff">
+                  <button class="btn btn-outline-action btn-handoff" data-handoff="off" onclick="toggleVisionHandoff(false)">Off</button>
+                  <button class="btn btn-outline-action btn-handoff" data-handoff="on" onclick="toggleVisionHandoff(true)">On</button>
                 </div>
-                <div id="gitGuardStatus" style="font-size:0.6rem;color:rgba(255,255,255,0.75);min-height:0.8rem;margin-top:2px"></div>
+              </div>
+              <div class="mb-2" id="handoffCacheWrapper" style="display:none">
+                <label class="form-label d-flex align-items-center gap-1" style="font-size:0.7rem;color:rgba(255,255,255,0.75);margin-bottom:2px">
+                  Handoff Cache
+                  <i class="bi bi-info-circle" style="cursor:help;color:rgba(255,255,255,0.7)" data-bs-toggle="tooltip" data-bs-html="true" title="Caches image descriptions from the handoff model for 24 hours. When the same image is seen again, the cached description is reused instead of calling the upstream again."></i>
+                </label>
+                <div class="btn-group w-100" role="group" id="handoffCacheGroup" aria-label="Handoff cache">
+                  <button class="btn btn-outline-action btn-handoffcache" data-handoffcache="off" onclick="toggleHandoffCache(false)">Off</button>
+                  <button class="btn btn-outline-action btn-handoffcache" data-handoffcache="on" onclick="toggleHandoffCache(true)">On</button>
+                </div>
+                <div id="handoffCacheStats" style="font-size:0.6rem;color:rgba(255,255,255,0.5);margin-top:2px"></div>
               </div>
             </div>
           </div>
@@ -319,6 +391,7 @@
   </div>
 
   <div class="toast-container" id="toastContainer"></div>
+  <div id="historyTooltip" style="position:fixed;display:none;pointer-events:none;z-index:2000;max-width:min(260px,calc(100vw - 16px));padding:8px 10px;border-radius:8px;background:rgba(10,12,16,0.92);border:1px solid rgba(255,255,255,0.12);box-shadow:0 8px 32px rgba(0,0,0,0.4);font-size:0.65rem;color:rgba(255,255,255,0.9);backdrop-filter:blur(8px)"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
   <script>
@@ -376,7 +449,20 @@
 
     function showToast(m, type) { const d=document.createElement('div'); d.className=`toast align-items-center text-white bg-${type||'info'} border-0 show`; d.innerHTML=`<div class="d-flex"><div class="toast-body"></div><button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>`; d.querySelector('.toast-body').textContent = m; document.getElementById('toastContainer').appendChild(d); setTimeout(()=>d.remove(),3000); }
     function escapeHtml(t){if(t==null)return '';const d=document.createElement('div');d.textContent=String(t);return d.innerHTML.replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
-    function toggleSection(n) { const b=document.getElementById('section-'+n),c=document.querySelector('[data-section="'+n+'"]'),i=c?.querySelector('.toggle-icon'),h=c?.querySelector('.collapsible-header'); if(b&&i){b.classList.toggle('collapsed');i.classList.toggle('collapsed');if(h)h.setAttribute('aria-expanded',String(!b.classList.contains('collapsed')));}setTimeout(initLiquidGlass,50); }
+    function layoutStatGrids() {
+      const minColWidth = 120;
+      document.querySelectorAll('.stat-grid').forEach(grid => {
+        const n = grid.children.length;
+        if (!n) return;
+        const w = grid.clientWidth;
+        let best = 1;
+        for (let d = n; d >= 1; d--) {
+          if (n % d === 0 && w / d >= minColWidth) { best = d; break; }
+        }
+        grid.style.gridTemplateColumns = `repeat(${best}, 1fr)`;
+      });
+    }
+    function toggleSection(n) { const b=document.getElementById('section-'+n),c=document.querySelector('[data-section="'+n+'"]'),i=c?.querySelector('.toggle-icon'),h=c?.querySelector('.collapsible-header'); if(b&&i){b.classList.toggle('collapsed');i.classList.toggle('collapsed');if(h)h.setAttribute('aria-expanded',String(!b.classList.contains('collapsed')));}setTimeout(initLiquidGlass,50);setTimeout(layoutStatGrids,50); }
 
     function setWallpaperActive(source) {
       document.querySelectorAll('.btn-wp').forEach(b => { const isActive = b.dataset.wp === source; b.classList.toggle('active', isActive); b.setAttribute('aria-pressed', isActive ? 'true' : 'false'); });
@@ -518,32 +604,38 @@
       }
     }
 
-    function setGitGuardActive(enabled) {
-      document.querySelectorAll('.btn-gitguard').forEach(btn => {
-        const isActive = (enabled && btn.dataset.gitguard === 'on') || (!enabled && btn.dataset.gitguard === 'off');
+    function setVisionHandoffActive(enabled) {
+      document.querySelectorAll('.btn-handoff').forEach(btn => {
+        const isActive = (enabled && btn.dataset.handoff === 'on') || (!enabled && btn.dataset.handoff === 'off');
         btn.classList.toggle('active', isActive);
         btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
       });
-      const status = document.getElementById('gitGuardStatus');
-      if (status) {
-        status.innerHTML = enabled
-          ? '<span style="color:#fbbf24">Warning:</span> Real-time streaming is disabled. Responses are buffered before delivery.'
-          : '';
+    }
+    async function toggleVisionHandoff(enabled) {
+      setVisionHandoffActive(enabled);
+      const cacheWrapper = document.getElementById('handoffCacheWrapper');
+      if (cacheWrapper) cacheWrapper.style.display = enabled ? '' : 'none';
+      try {
+        await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ visionHandoffEnabled: enabled }) });
+      } catch (e) {
+        setVisionHandoffActive(!enabled);
+        if (cacheWrapper) cacheWrapper.style.display = !enabled ? '' : 'none';
       }
     }
-    async function toggleGitGuard(enabled) {
-      setGitGuardActive(enabled);
-      const status = document.getElementById('gitGuardStatus');
+
+    function setHandoffCacheActive(enabled) {
+      document.querySelectorAll('.btn-handoffcache').forEach(btn => {
+        const isActive = (enabled && btn.dataset.handoffcache === 'on') || (!enabled && btn.dataset.handoffcache === 'off');
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      });
+    }
+    async function toggleHandoffCache(enabled) {
+      setHandoffCacheActive(enabled);
       try {
-        const r = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shellToolGuard: enabled }) });
-        const d = await r.json();
-        if (!d.success) throw new Error('failed');
-        if (status && enabled) {
-          status.innerHTML = '<span style="color:#fbbf24">Warning:</span> Real-time streaming is disabled. Responses are buffered before delivery.';
-        }
+        await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ visionHandoffCacheEnabled: enabled }) });
       } catch (e) {
-        if (status) status.textContent = 'Error: ' + e.message;
-        setGitGuardActive(!enabled);
+        setHandoffCacheActive(!enabled);
       }
     }
 
@@ -660,11 +752,12 @@
           }
         }
         if (queued > 0) {
-          details.push({ label: 'Queued', value: queued.toString(), warn: true });
+          details.push({ label: 'Queued', value: queued.toString(), warn: true, color: '#0d6efd' });
         }
         detailGrid.innerHTML = details.map(d =>
-          `<div class="col-${details.length <= 2 ? '6' : '4'}"><div class="usage-detail-item"><div class="usage-detail-label">${escapeHtml(d.label)}</div><div class="usage-detail-value" style="color:${d.warn?'#fbbf24':'#fff'}${d.masked?'':';font-variant-numeric:tabular-nums'}">${d.masked?`<span class="masked-userid" data-userid="${escapeHtml(d.value)}" onclick="this.classList.toggle('revealed');this.textContent=this.classList.contains('revealed')?this.dataset.userid:'${'•'.repeat(Math.min(d.value.length, 12))}'" style="cursor:pointer">${'•'.repeat(Math.min(d.value.length, 12))}</span>`:escapeHtml(d.value)}</div></div></div>`
+          `<div class="${d.color?`border-top-color:${d.color};`:''}"><div class="card stat-inline-card h-100"><div class="card-content" style="${d.color?`border-top-color:${d.color};`:''}"><div class="stats-value" style="color:${d.warn?'#fbbf24':'#fff'}${d.masked?'':';font-variant-numeric:tabular-nums'}">${d.masked?`<span class="masked-userid" data-userid="${escapeHtml(d.value)}" onclick="this.classList.toggle('revealed');this.textContent=this.classList.contains('revealed')?this.dataset.userid:'${'•'.repeat(Math.min(d.value.length, 12))}'" style="cursor:pointer">${'•'.repeat(Math.min(d.value.length, 12))}</span>`:escapeHtml(d.value)}</div><div class="stats-label">${escapeHtml(d.label)}</div></div></div></div>`
         ).join('');
+        layoutStatGrids();
       } catch {
         // Leave defaults (--)
       }
@@ -743,8 +836,11 @@
           // Sleev init
           setSleevActive(!!cd.sleevEnabled);
           pollSleevStatus();
-          // Git Guard init
-          setGitGuardActive(!!cd.shellToolGuard);
+          // Vision handoff + cache init
+          setVisionHandoffActive(!!cd.visionHandoffEnabled);
+          setHandoffCacheActive(cd.visionHandoffCacheEnabled !== false);
+          const cacheWrapper = document.getElementById('handoffCacheWrapper');
+          if (cacheWrapper) cacheWrapper.style.display = cd.visionHandoffEnabled ? '' : 'none';
         }
         renderModels(); renderTokenPools(); updateStats(); await fetchUsage();
         setTimeout(initLiquidGlass, 50);
@@ -778,16 +874,17 @@
         const details = [];
         if (win.started_at) {
           const start = new Date(win.started_at);
-          details.push({label:'Start Time', value: start.toLocaleString()});
+          details.push({label:'Start Time', value: start.toLocaleTimeString(), color:'#d63384'});
         }
-        details.push({label:'Tokens In', value: tokensIn.toLocaleString()});
-        details.push({label:'Tokens Out', value: tokensOut.toLocaleString()});
+        details.push({label:'Tokens In', value: tokensIn.toLocaleString(), color:'#fde047'});
+        details.push({label:'Tokens Out', value: tokensOut.toLocaleString(), color:'#fd7e14'});
         if (usage.priority && usage.priority.low) {
           details.push({label:'Priority', value: 'Low' + (usage.priority.reason ? ' (' + usage.priority.reason + ')' : ''), warn: true});
         }
         detailGrid.innerHTML = details.map(d =>
-          `<div class="col-4"><div class="usage-detail-item"><div class="usage-detail-label">${escapeHtml(d.label)}</div><div class="usage-detail-value" style="color:${d.warn?'#fbbf24':'#fff'}">${escapeHtml(d.value)}</div></div></div>`
+          `<div><div class="card stat-inline-card h-100"><div class="card-content" style="${d.color?`border-top-color:${d.color};`:''}"><div class="stats-value" style="color:${d.warn?'#fbbf24':'#fff'}">${escapeHtml(d.value)}</div><div class="stats-label">${escapeHtml(d.label)}</div></div></div></div>`
         ).join('');
+        layoutStatGrids();
       } catch { document.getElementById('throttledCount').textContent='--';document.getElementById('totalRequests').textContent='--';document.getElementById('cachedPct').textContent='--'; }
     }
 
@@ -797,21 +894,588 @@
       document.getElementById('portInfo').textContent = proxyData.port||'8084';
       const started = proxyData.started_at ? new Date(proxyData.started_at).toLocaleString() : '-';
       document.getElementById('startedAt').textContent = started;
-      const cache = proxyData.cache || {};
-      const cacheText = document.getElementById('cacheStatsText');
-      if (cacheText) {
-        const hits = cache.hits ?? 0;
-        const misses = cache.misses ?? 0;
-        const size = cache.size ?? 0;
-        cacheText.textContent = 'Cache: ' + hits + ' hits, ' + misses + ' misses (' + size + ' entries)';
+      // Handoff cache stats
+      const vh = proxyData.visionHandoff;
+      const hcs = document.getElementById('handoffCacheStats');
+      if (hcs && vh && vh.cache) {
+        const c = vh.cache;
+        hcs.textContent = c.hits + ' hits, ' + c.misses + ' misses (' + c.size + ' entries)';
       }
     }
 
     let usageIntervalId = null;
+    let historyIntervalId = null;
+    const HISTORY_REFRESH_MS = 5 * 60 * 1000;
+    let historyState = { range: '7d', granularity: 'day', metric: 'tokens', hiddenStatuses: new Set(), loading: false, error: null, selectedBucket: null, totalRows: 0, detailSort: { key: null, dir: -1 }, tableSort: { key: 'bucket', dir: -1 } };
+    const HISTORY_STATUS_COLORS = {
+      ok: { color: '#32CD32', label: 'OK' },
+      client_cancelled: { color: '#fde047', label: 'Cancelled' },
+      upstream_error: { color: '#fd7e14', label: 'Upstream Error' },
+      rate_limited: { color: '#dc3545', label: 'Rate Limited' },
+      auth_error: { color: '#6c757d', label: 'Auth Error' },
+      gateway_error: { color: '#0dcaf0', label: 'Gateway Error' },
+    };
+    const ERROR_STATUSES = new Set(['upstream_error', 'rate_limited', 'auth_error', 'gateway_error']);
+    function formatCompact(n) {
+      if (n == null || isNaN(n)) return '0';
+      const abs = Math.abs(n);
+      if (abs >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+      if (abs >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+      if (abs >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+      return n.toLocaleString(undefined, { maximumFractionDigits: 1 });
+    }
+    function getHistoryRange(range) {
+      const to = new Date();
+      const from = new Date();
+      if (range === '24h') from.setHours(from.getHours() - 24);
+      else if (range === '7d') from.setDate(from.getDate() - 7);
+      else if (range === '30d') from.setDate(from.getDate() - 30);
+      return { from: from.toISOString(), to: to.toISOString() };
+    }
+    function setHistoryRange(range) {
+      historyState.range = range;
+      historyState.selectedBucket = null;
+      document.querySelectorAll('.btn-hist-range').forEach(btn => btn.classList.toggle('active', btn.dataset.range === range));
+      const wantsHour = range === '24h';
+      if (wantsHour && historyState.granularity !== 'hour') {
+        historyState.granularity = 'hour';
+        document.querySelectorAll('.btn-hist-gran').forEach(btn => btn.classList.toggle('active', btn.dataset.gran === 'hour'));
+      }
+      fetchHistory();
+    }
+    function setHistoryGranularity(gran) {
+      historyState.granularity = gran;
+      historyState.selectedBucket = null;
+      document.querySelectorAll('.btn-hist-gran').forEach(btn => btn.classList.toggle('active', btn.dataset.gran === gran));
+      fetchHistory();
+    }
+    function setHistoryMetric(metric) {
+      historyState.metric = metric;
+      historyState.detailSort = { key: null, dir: -1 };
+      document.querySelectorAll('.btn-hist-metric').forEach(btn => btn.classList.toggle('active', btn.dataset.metric === metric));
+      const legendWrapper = document.getElementById('historyLegendWrapper');
+      if (metric === 'tokens') {
+        // Keep only OK; hide all other statuses
+        historyState.hiddenStatuses = new Set(['client_cancelled', 'upstream_error', 'rate_limited', 'auth_error', 'gateway_error']);
+        if (legendWrapper) legendWrapper.style.display = 'none';
+      } else {
+        // Requests: clear forced hides, let user control via legend
+        historyState.hiddenStatuses = new Set();
+        if (legendWrapper) legendWrapper.style.display = '';
+      }
+      renderHistory();
+    }
+    function toggleHistoryStatus(status) {
+      if (historyState.hiddenStatuses.has(status)) historyState.hiddenStatuses.delete(status);
+      else historyState.hiddenStatuses.add(status);
+      renderHistory();
+    }
+    let lastHistoryData = null;
+    async function fetchHistory() {
+      const chartEl = document.getElementById('historyChart');
+      historyState.loading = true;
+      historyState.error = null;
+      if (chartEl && !lastHistoryData) {
+        chartEl.innerHTML = '<div class="w-100 text-center text-muted" style="font-size:0.75rem;display:flex;align-items:center;justify-content:center;height:100%;gap:6px"><span class="spinner-border spinner-border-sm" role="status"></span>Loading...</div>';
+      }
+      const { from, to } = getHistoryRange(historyState.range);
+      try {
+        const r = await fetch(`/api/umans/usage-history?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&granularity=${historyState.granularity}`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const d = await r.json();
+        lastHistoryData = d;
+        historyState.loading = false;
+        historyState.error = null;
+        renderHistory();
+      } catch (e) {
+        historyState.loading = false;
+        historyState.error = e.message || 'Failed to load history';
+        renderHistory();
+      }
+    }
+    function groupHistoryBuckets(buckets) {
+      const groups = {};
+      for (const b of (buckets || [])) {
+        const key = b.bucket || '';
+        if (!groups[key]) groups[key] = { bucket: key, rows: [] };
+        groups[key].rows.push(b);
+      }
+      return Object.values(groups).sort((a, b) => new Date(a.bucket) - new Date(b.bucket));
+    }
+    function aggregateHistoryTotals(buckets) {
+      let requests = 0, weighted = 0, tokensIn = 0, tokensOut = 0, cachedRead = 0, errorReqs = 0, peakConc = 0;
+      let allRequests = 0, allErrorReqs = 0;
+      for (const b of (buckets || [])) {
+        const isErr = ERROR_STATUSES.has(getHistoryStatus(b));
+        // Always count errors from all buckets for the stat card
+        allRequests += b.requests || 0;
+        if (isErr) allErrorReqs += b.requests || 0;
+        if (historyState.hiddenStatuses.has(getHistoryStatus(b))) continue;
+        requests += b.requests || 0;
+        weighted += b.weighted_requests || 0;
+        tokensIn += b.tokens_in_total || b.tokens_in || 0;
+        tokensOut += b.tokens_out || 0;
+        cachedRead += b.tokens_cached_read || 0;
+        const peak = b.account_peak_concurrent_requests || b.peak_concurrent_requests || 0;
+        if (peak > peakConc) peakConc = peak;
+        if (isErr) errorReqs += b.requests || 0;
+      }
+      const cachedPct = tokensIn > 0 ? (cachedRead / tokensIn) * 100 : 0;
+      // In Tokens mode, error rate reflects all buckets (status hiding is a metric constraint, not a filter).
+      // In Requests mode, error rate reflects only visible (unhidden) statuses.
+      const errorRate = historyState.metric === 'tokens'
+        ? (allRequests > 0 ? (allErrorReqs / allRequests) * 100 : 0)
+        : (requests > 0 ? (errorReqs / requests) * 100 : 0);
+      return { requests, weighted, tokensIn, tokensOut, cachedRead, cachedPct, errorReqs, errorRate, peakConc };
+    }
+    function getHistoryStatus(b) {
+      return b.status || b.error_category || 'ok';
+    }
+    function renderHistoryLegend(statuses) {
+      const container = document.getElementById('historyLegend');
+      if (!container) return;
+      container.innerHTML = statuses.map(s => {
+        const info = HISTORY_STATUS_COLORS[s] || { color: '#9ca3af', label: s };
+        const hidden = historyState.hiddenStatuses.has(s);
+        return `<button class="btn btn-sm" onclick="toggleHistoryStatus('${s}')" style="background:${hidden ? 'transparent' : info.color + '20'};border:1px solid ${info.color};color:${hidden ? 'rgba(255,255,255,0.5)' : '#fff'};padding:1px 6px;font-size:0.6rem;border-radius:4px;display:inline-flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;background:${hidden ? 'rgba(255,255,255,0.3)' : info.color};display:inline-block"></span>${escapeHtml(info.label)}</button>`;
+      }).join('');
+    }
+    function renderHistoryTooltipContent(g) {
+      const metric = historyState.metric;
+      const rows = g.rows.slice().sort((a, b) => (b.requests || 0) - (a.requests || 0));
+      const total = rows.reduce((sum, r) => sum + (metric === 'tokens' ? ((r.tokens_in_total || r.tokens_in || 0) + (r.tokens_out || 0)) : (r.requests || 0)), 0);
+      const dateLabel = historyState.granularity === 'day'
+        ? new Date(g.bucket).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })
+        : new Date(g.bucket).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const statusSummary = {};
+      for (const r of rows) {
+        const st = getHistoryStatus(r);
+        if (!statusSummary[st]) statusSummary[st] = { requests: 0, weighted: 0, tokensIn: 0, tokensOut: 0, count: 0 };
+        statusSummary[st].requests += r.requests || 0;
+        statusSummary[st].weighted += r.weighted_requests || 0;
+        statusSummary[st].tokensIn += r.tokens_in_total || r.tokens_in || 0;
+        statusSummary[st].tokensOut += r.tokens_out || 0;
+        statusSummary[st].count += 1;
+      }
+      const statusRows = metric === 'tokens' ? '' : Object.entries(statusSummary).sort((a, b) => b[1].requests - a[1].requests).map(([st, agg]) => {
+        const info = HISTORY_STATUS_COLORS[st] || { color: '#9ca3af', label: st };
+        const val = formatCompact(agg.requests);
+        return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:3px"><span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;background:${info.color}"></span><span style="color:${info.color}">${escapeHtml(info.label)}</span></span><span style="font-variant-numeric:tabular-nums">${val}</span></div>`;
+      }).join('');
+      const topRows = (() => {
+        const byModel = {};
+        for (const r of rows) {
+          const name = r.provider || r.model || 'unknown';
+          if (!byModel[name]) byModel[name] = { requests: 0, tokensIn: 0, tokensOut: 0 };
+          byModel[name].requests += r.requests || 0;
+          byModel[name].tokensIn += r.tokens_in_total || r.tokens_in || 0;
+          byModel[name].tokensOut += r.tokens_out || 0;
+        }
+        return Object.entries(byModel)
+          .map(([name, agg]) => ({
+            name,
+            val: metric === 'tokens' ? (agg.tokensIn + agg.tokensOut) : agg.requests,
+          }))
+          .filter(e => e.val > 0)
+          .sort((a, b) => b.val - a.val)
+          .slice(0, 3)
+          .map(({ name, val }) =>
+            `<div style="display:flex;justify-content:space-between;gap:6px;margin-top:2px;color:rgba(255,255,255,1)"><span>${escapeHtml(name)}</span><span style="font-variant-numeric:tabular-nums">${formatCompact(val)}</span></div>`
+          ).join('');
+      })();
+      return `<div style="font-weight:600;margin-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.15);padding-bottom:3px">${escapeHtml(dateLabel)}</div>
+        <div style="color:rgba(255,255,255,0.85);margin-bottom:4px">Total: <span style="color:#fff;font-weight:600">${metric === 'tokens' ? formatCompact(total) + ' tokens' : formatCompact(total) + ' requests'}</span></div>
+        ${statusRows}
+        <div style="margin-top:6px;border-top:1px solid rgba(255,255,255,0.12);padding-top:4px;color:rgba(255,255,255,0.85)">Top models</div>${topRows}`;
+    }
+    let _historyDocClickHandler = null;
+    function renderHistoryChart(groups) {
+      const container = document.getElementById('historyChart');
+      const yAxisEl = document.getElementById('historyYAxis');
+      const xAxisEl = document.getElementById('historyXAxis');
+      if (historyState.error) {
+        container.innerHTML = '<div class="w-100 text-center" style="font-size:0.75rem;color:#dc3545;display:flex;align-items:center;justify-content:center;height:100%;gap:4px"><i class="bi bi-exclamation-triangle"></i>Failed to load history</div>';
+        if (yAxisEl) yAxisEl.innerHTML = '';
+        if (xAxisEl) xAxisEl.innerHTML = '';
+        return;
+      }
+      if (!groups.length) {
+        container.innerHTML = '<div class="w-100 text-center text-muted" style="font-size:0.75rem;display:flex;align-items:center;justify-content:center;height:100%">No history data</div>';
+        if (yAxisEl) yAxisEl.innerHTML = '';
+        if (xAxisEl) xAxisEl.innerHTML = '';
+        return;
+      }
+      container.replaceChildren();
+      const metric = historyState.metric;
+      let maxVal = 0;
+      for (const g of groups) {
+        let val = 0;
+        for (const r of g.rows) {
+          const status = getHistoryStatus(r);
+          if (historyState.hiddenStatuses.has(status)) continue;
+          val += metric === 'tokens' ? ((r.tokens_in_total || r.tokens_in || 0) + (r.tokens_out || 0)) : (r.requests || 0);
+        }
+        if (val > maxVal) maxVal = val;
+      }
+      if (maxVal <= 0) maxVal = 1;
+      // Build Y-axis labels and grid lines (5 ticks)
+      const yTicks = 5;
+      if (yAxisEl) {
+        yAxisEl.innerHTML = '';
+        for (let i = yTicks; i >= 0; i--) {
+          const v = (maxVal * i / yTicks);
+          const label = document.createElement('div');
+          label.textContent = formatCompact(v);
+          label.style.lineHeight = '1';
+          yAxisEl.appendChild(label);
+        }
+      }
+      // Add horizontal grid lines
+      container.style.background = 'rgba(0,0,0,0.2)';
+      const gridOverlay = document.createElement('div');
+      gridOverlay.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:0';
+      for (let i = 1; i < yTicks; i++) {
+        const line = document.createElement('div');
+        line.style.cssText = `position:absolute;left:0;right:0;top:${(i / yTicks * 100).toFixed(2)}%;border-top:1px dashed rgba(255,255,255,0.15)`;
+        gridOverlay.appendChild(line);
+      }
+      container.appendChild(gridOverlay);
+      const statuses = new Set(groups.flatMap(g => g.rows.map(r => getHistoryStatus(r))));
+      const statusList = Array.from(statuses).sort();
+      const statusOrder = ['ok', 'client_cancelled', 'upstream_error', 'rate_limited', 'auth_error', 'gateway_error'];
+      const orderedStatuses = statusOrder.filter(s => statusList.includes(s)).concat(statusList.filter(s => !statusOrder.includes(s)));
+      const isDay = new Date(groups[0].bucket).toISOString().slice(11, 13) === '00' && historyState.granularity === 'day';
+      const labelInterval = Math.max(1, Math.ceil(groups.length / 8));
+      const tooltip = document.getElementById('historyTooltip');
+      // Build X-axis labels
+      if (xAxisEl) { xAxisEl.innerHTML = ''; }
+      groups.forEach((g, idx) => {
+        const segments = orderedStatuses.map(s => {
+          let val = 0;
+          for (const r of g.rows) { if (getHistoryStatus(r) === s && !historyState.hiddenStatuses.has(s)) val += metric === 'tokens' ? ((r.tokens_in_total || r.tokens_in || 0) + (r.tokens_out || 0)) : (r.requests || 0); }
+          return { status: s, val };
+        }).filter(seg => seg.val > 0);
+        const total = segments.reduce((a, s) => a + s.val, 0);
+        const pct = Math.max(1.5, Math.round((total / maxVal) * 100));
+        const unitPct = total > 0 ? 100 / total : 0;
+        const showLabel = idx % labelInterval === 0 || idx === groups.length - 1;
+        const label = isDay
+          ? new Date(g.bucket).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+          : new Date(g.bucket).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+        const col = document.createElement('div');
+        col.className = 'history-bar-col';
+        col.dataset.bucket = g.bucket;
+        col.style.cssText = 'flex:1;min-width:8px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;gap:0;position:relative;transition:opacity 0.15s ease;z-index:1';
+        if (historyState.selectedBucket && historyState.selectedBucket !== g.bucket) col.style.opacity = '0.45';
+        col.innerHTML = `<div class="history-bar-stack" style="width:85%;max-width:36px;display:flex;flex-direction:column;justify-content:flex-end;height:0%;border-radius:4px 4px 0 0;overflow:hidden;transition:height 0.5s cubic-bezier(0.22,1,0.36,1),filter 0.15s ease;box-shadow:0 2px 6px rgba(0,0,0,0.25)">
+            ${segments.map(seg => `<div class="history-seg" data-status="${seg.status}" style="width:100%;height:${(seg.val * unitPct).toFixed(4)}%;background:${(HISTORY_STATUS_COLORS[seg.status] || { color: '#9ca3af' }).color};min-height:1px;transition:transform 0.15s ease"></div>`).join('')}
+          </div>`;
+        const stack = col.querySelector('.history-bar-stack');
+        requestAnimationFrame(() => { stack.style.height = pct + '%'; });
+        col.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (historyState.selectedBucket === g.bucket) {
+            historyState.selectedBucket = null;
+            tooltip.style.display = 'none';
+            container.querySelectorAll('.history-bar-col').forEach(c => { c.style.opacity = ''; });
+            renderHistoryTable(groups);
+          } else {
+            historyState.selectedBucket = g.bucket;
+            container.querySelectorAll('.history-bar-col').forEach(c => { c.style.opacity = c.dataset.bucket === g.bucket ? '' : '0.45'; });
+            renderHistoryTable(groups.filter(x => x.bucket === g.bucket));
+            // Position tooltip near the click, clamped to viewport
+            tooltip.innerHTML = renderHistoryTooltipContent(g);
+            tooltip.style.display = 'block';
+            const tw = tooltip.offsetWidth;
+            const th = tooltip.offsetHeight;
+            let left = e.clientX - (tw / 2);
+            left = Math.max(8, Math.min(left, window.innerWidth - tw - 8));
+            let top = e.clientY - th - 14;
+            if (top < 8) top = e.clientY + 14;
+            tooltip.style.left = left + 'px';
+            tooltip.style.top = top + 'px';
+          }
+        });
+        container.appendChild(col);
+        // X-axis label
+        if (xAxisEl) {
+          const xLabel = document.createElement('div');
+          xLabel.style.cssText = `flex:1;min-width:8px;text-align:center;font-size:0.5rem;color:rgba(255,255,255,0.5);white-space:nowrap;overflow:visible`;
+          xLabel.textContent = showLabel ? label : '';
+          xAxisEl.appendChild(xLabel);
+        }
+      });
+      if (_historyDocClickHandler) document.removeEventListener('click', _historyDocClickHandler);
+      _historyDocClickHandler = (e) => {
+        if (!e.target.closest('#historyChart') && !e.target.closest('#historyTableContainer')) {
+          tooltip.style.display = 'none';
+          if (historyState.selectedBucket) {
+            historyState.selectedBucket = null;
+            container.querySelectorAll('.history-bar-col').forEach(c => { c.style.opacity = ''; });
+            renderHistoryTable(groups);
+          }
+        }
+      };
+      document.addEventListener('click', _historyDocClickHandler);
+      renderHistoryLegend(orderedStatuses);
+    }
+    function renderHistoryTable(groups) {
+      const container = document.getElementById('historyTableContainer');
+      const footer = document.getElementById('historyRowCount');
+      if (!groups.length) { container.innerHTML = ''; if (footer) footer.textContent = ''; return; }
+      // Aggregate each group (date) into a single consolidated row
+      const consolidated = groups.map(g => {
+        const rows = g.rows.filter(r => !historyState.hiddenStatuses.has(getHistoryStatus(r)));
+        let requests = 0, weighted = 0, tokensIn = 0, tokensOut = 0, cachedRead = 0, peak = 0;
+        for (const r of rows) {
+          requests += r.requests || 0;
+          weighted += r.weighted_requests || 0;
+          tokensIn += r.tokens_in_total || r.tokens_in || 0;
+          tokensOut += r.tokens_out || 0;
+          cachedRead += r.tokens_cached_read || 0;
+          const p = r.account_peak_concurrent_requests || r.peak_concurrent_requests || 0;
+          if (p > peak) peak = p;
+        }
+        return { bucket: g.bucket, rows, requests, weighted, tokensIn, tokensOut, cachedRead, peak };
+      });
+      // Sort consolidated rows by tableSort state
+      const tsKey = historyState.tableSort.key;
+      const tsDir = historyState.tableSort.dir;
+      consolidated.sort((a, b) => {
+        let va, vb;
+        if (tsKey === 'bucket') { va = new Date(a.bucket).getTime(); vb = new Date(b.bucket).getTime(); }
+        else if (tsKey === 'cachePct') {
+          va = a.tokensIn > 0 ? a.cachedRead / a.tokensIn : 0;
+          vb = b.tokensIn > 0 ? b.cachedRead / b.tokensIn : 0;
+        }
+        else { va = a[tsKey] || 0; vb = b[tsKey] || 0; }
+        return (va - vb) * tsDir;
+      });
+      if (footer) {
+        const filtered = consolidated.length;
+        const total = historyState.selectedBucket ? historyState.totalRows : filtered;
+        footer.textContent = filtered !== total ? `${filtered}/${total} rows` : (filtered === 1 ? '1 row' : `${filtered} rows`);
+      }
+      const tsIcon = (key) => {
+        const active = historyState.tableSort.key === key;
+        if (!active) return '';
+        return tsDir < 0 ? ' <i class="bi bi-caret-down-fill" style="font-size:0.45rem"></i>' : ' <i class="bi bi-caret-up-fill" style="font-size:0.45rem"></i>';
+      };
+      const table = `<table class="table table-sm table-dark mb-0" style="font-size:0.65rem;background:transparent">
+        <thead style="position:sticky;top:0;background:rgba(0,0,0,0.7)"><tr>
+          <th class="history-table-th" data-sortkey="bucket" style="border-color:rgba(255,255,255,0.1);cursor:pointer;user-select:none">${historyState.granularity === 'day' ? 'Date' : 'Time'}${tsIcon('bucket')}</th>
+          <th class="history-table-th" data-sortkey="requests" style="border-color:rgba(255,255,255,0.1);text-align:right;cursor:pointer;user-select:none">Requests${tsIcon('requests')}</th>
+          <th class="history-table-th" data-sortkey="tokensIn" style="border-color:rgba(255,255,255,0.1);text-align:right;cursor:pointer;user-select:none">Tokens In${tsIcon('tokensIn')}</th>
+          <th class="history-table-th" data-sortkey="tokensOut" style="border-color:rgba(255,255,255,0.1);text-align:right;cursor:pointer;user-select:none">Tokens Out${tsIcon('tokensOut')}</th>
+          <th class="history-table-th" data-sortkey="cachePct" style="border-color:rgba(255,255,255,0.1);text-align:right;cursor:pointer;user-select:none">Cache %${tsIcon('cachePct')}</th>
+          <th class="history-table-th" data-sortkey="peak" style="border-color:rgba(255,255,255,0.1);text-align:right;cursor:pointer;user-select:none">Peak${tsIcon('peak')}</th>
+        </tr></thead>
+        <tbody>${consolidated.map(c => {
+          const t = new Date(c.bucket);
+          const timeLabel = historyState.granularity === 'day' ? t.toLocaleDateString() : t.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+          const reqsCell = c.requests === c.weighted ? c.requests.toLocaleString() : c.requests.toLocaleString() + ' → ' + c.weighted.toLocaleString(undefined, { maximumFractionDigits: 1, minimumFractionDigits: 1 });
+          const cachePct = c.tokensIn > 0 ? ((c.cachedRead / c.tokensIn) * 100).toFixed(1) + '%' : '--';
+          // Build per-model detail rows
+          const byModel = {};
+          for (const r of c.rows) {
+            const name = r.provider === r.model ? (r.model || '') : (r.provider && r.model ? r.model + ' → ' + r.provider : (r.provider || r.model || ''));
+            if (!byModel[name]) byModel[name] = { requests: 0, weighted: 0, tokensIn: 0, tokensOut: 0, cachedRead: 0 };
+            byModel[name].requests += r.requests || 0;
+            byModel[name].weighted += r.weighted_requests || 0;
+            byModel[name].tokensIn += r.tokens_in_total || r.tokens_in || 0;
+            byModel[name].tokensOut += r.tokens_out || 0;
+            byModel[name].cachedRead += r.tokens_cached_read || 0;
+          }
+          const modelEntries = Object.entries(byModel);
+          // Default sort: by current metric descending
+          const defaultKey = historyState.metric === 'tokens' ? 'tokensIn' : 'requests';
+          const sortKey = historyState.detailSort.key || defaultKey;
+          const sortDir = historyState.detailSort.key ? historyState.detailSort.dir : -1;
+          modelEntries.sort((a, b) => {
+            if (sortKey === 'name') {
+              return a[0] < b[0] ? -sortDir : a[0] > b[0] ? sortDir : 0;
+            }
+            let va, vb;
+            if (sortKey === 'cachedRead') {
+              va = a[1].tokensIn > 0 ? a[1].cachedRead / a[1].tokensIn : 0;
+              vb = b[1].tokensIn > 0 ? b[1].cachedRead / b[1].tokensIn : 0;
+            } else {
+              va = a[1][sortKey] || 0;
+              vb = b[1][sortKey] || 0;
+            }
+            return (va - vb) * sortDir;
+          });
+          const renderModelRows = (entries) => entries.map(([name, m]) => {
+            const mReqsCell = m.requests === m.weighted ? m.requests.toLocaleString() : m.requests.toLocaleString() + ' → ' + m.weighted.toLocaleString(undefined, { maximumFractionDigits: 1, minimumFractionDigits: 1 });
+            const mCachePct = m.tokensIn > 0 ? ((m.cachedRead / m.tokensIn) * 100).toFixed(1) + '%' : '--';
+            return `<tr>
+              <td style="border-color:rgba(255,255,255,0.03);color:rgba(255,255,255,0.7);padding-left:16px">${escapeHtml(name)}</td>
+              <td style="border-color:rgba(255,255,255,0.03);text-align:right;font-variant-numeric:tabular-nums">${mReqsCell}</td>
+              <td style="border-color:rgba(255,255,255,0.03);text-align:right;font-variant-numeric:tabular-nums">${formatCompact(m.tokensIn)}</td>
+              <td style="border-color:rgba(255,255,255,0.03);text-align:right;font-variant-numeric:tabular-nums">${formatCompact(m.tokensOut)}</td>
+              <td style="border-color:rgba(255,255,255,0.03);text-align:right;font-variant-numeric:tabular-nums">${mCachePct}</td>
+              <td style="border-color:rgba(255,255,255,0.03)"></td>
+            </tr>`;
+          }).join('');
+          // Sort indicator helper
+          const sortIcon = (key) => {
+            const active = historyState.detailSort.key === key || (!historyState.detailSort.key && key === defaultKey);
+            const dir = active ? (historyState.detailSort.key ? historyState.detailSort.dir : -1) : 0;
+            if (!active) return '';
+            return dir < 0 ? ' <i class="bi bi-caret-down-fill" style="font-size:0.45rem"></i>' : ' <i class="bi bi-caret-up-fill" style="font-size:0.45rem"></i>';
+          };
+          return `<tr style="cursor:pointer" data-bucket="${escapeHtml(c.bucket)}">
+            <td style="border-color:rgba(255,255,255,0.05)">${escapeHtml(timeLabel)} <i class="bi bi-chevron-down" style="font-size:0.5rem;margin-left:2px;transition:transform 0.2s ease"></i></td>
+            <td style="border-color:rgba(255,255,255,0.05);text-align:right;font-variant-numeric:tabular-nums">${reqsCell}</td>
+            <td style="border-color:rgba(255,255,255,0.05);text-align:right;font-variant-numeric:tabular-nums">${formatCompact(c.tokensIn)}</td>
+            <td style="border-color:rgba(255,255,255,0.05);text-align:right;font-variant-numeric:tabular-nums">${formatCompact(c.tokensOut)}</td>
+            <td style="border-color:rgba(255,255,255,0.05);text-align:right;font-variant-numeric:tabular-nums">${cachePct}</td>
+            <td style="border-color:rgba(255,255,255,0.05);text-align:right;font-variant-numeric:tabular-nums">${c.peak}</td>
+          </tr>
+          <tr class="history-detail-row" data-bucket="${escapeHtml(c.bucket)}" style="display:none">
+            <td colspan="6" style="padding:0;border:none">
+              <div class="history-detail-wrapper" style="overflow:hidden;max-height:0;transition:max-height 0.3s ease">
+                <table class="table table-sm table-dark mb-0" style="font-size:0.6rem;background:rgba(0,0,0,0.15)">
+                  <thead><tr>
+                    <th class="history-detail-th" data-sortkey="name" style="border-color:rgba(255,255,255,0.05);font-weight:400;color:rgba(255,255,255,0.6);cursor:pointer;user-select:none">Model${sortIcon('name')}</th>
+                    <th class="history-detail-th" data-sortkey="requests" style="border-color:rgba(255,255,255,0.05);font-weight:400;color:rgba(255,255,255,0.6);text-align:right;cursor:pointer;user-select:none">Requests${sortIcon('requests')}</th>
+                    <th class="history-detail-th" data-sortkey="tokensIn" style="border-color:rgba(255,255,255,0.05);font-weight:400;color:rgba(255,255,255,0.6);text-align:right;cursor:pointer;user-select:none">Tokens In${sortIcon('tokensIn')}</th>
+                    <th class="history-detail-th" data-sortkey="tokensOut" style="border-color:rgba(255,255,255,0.05);font-weight:400;color:rgba(255,255,255,0.6);text-align:right;cursor:pointer;user-select:none">Tokens Out${sortIcon('tokensOut')}</th>
+                    <th class="history-detail-th" data-sortkey="cachedRead" style="border-color:rgba(255,255,255,0.05);font-weight:400;color:rgba(255,255,255,0.6);text-align:right;cursor:pointer;user-select:none">Cache %${sortIcon('cachedRead')}</th>
+                    <th style="border-color:rgba(255,255,255,0.05)"></th>
+                  </tr></thead>
+                  <tbody class="history-detail-tbody" data-models='${escapeHtml(JSON.stringify(modelEntries))}'>${renderModelRows(modelEntries)}</tbody>
+                </table>
+              </div>
+            </td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>`;
+      container.innerHTML = table;
+      // Click handler for outer table sort headers
+      container.querySelectorAll('.history-table-th').forEach(th => {
+        th.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const key = th.dataset.sortkey;
+          if (historyState.tableSort.key === key) {
+            historyState.tableSort.dir *= -1;
+          } else {
+            historyState.tableSort.key = key;
+            historyState.tableSort.dir = -1;
+          }
+          renderHistoryTable(groups);
+        });
+      });
+      // Click handler for table rows: expand/collapse detail row
+      container.querySelectorAll('tr[data-bucket]').forEach(tr => {
+        tr.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const bucket = tr.dataset.bucket;
+          const detailRow = container.querySelector(`tr.history-detail-row[data-bucket="${CSS.escape(bucket)}"]`);
+          if (!detailRow) return;
+          const wrapper = detailRow.querySelector('.history-detail-wrapper');
+          const chevron = tr.querySelector('.bi-chevron-down');
+          const isExpanded = detailRow.style.display !== 'none' && wrapper.style.maxHeight !== '0px';
+          if (isExpanded) {
+            // Collapse: set explicit height first so transition has a starting value
+            wrapper.style.maxHeight = wrapper.scrollHeight + 'px';
+            wrapper.offsetHeight; // force reflow
+            wrapper.style.maxHeight = '0px';
+            if (chevron) chevron.style.transform = '';
+            setTimeout(() => { detailRow.style.display = 'none'; }, 300);
+          } else {
+            // Expand
+            detailRow.style.display = '';
+            wrapper.style.maxHeight = wrapper.scrollHeight + 'px';
+            if (chevron) chevron.style.transform = 'rotate(180deg)';
+            setTimeout(() => { wrapper.style.maxHeight = 'none'; }, 300);
+          }
+        });
+      });
+      // Sort header click handlers for detail tables
+      container.querySelectorAll('.history-detail-th').forEach(th => {
+        th.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const key = th.dataset.sortkey;
+          if (historyState.detailSort.key === key) {
+            historyState.detailSort.dir *= -1;
+          } else {
+            historyState.detailSort.key = key;
+            historyState.detailSort.dir = key === 'name' ? 1 : -1;
+          }
+          const tbody = th.closest('table').querySelector('.history-detail-tbody');
+          const entries = JSON.parse(tbody.dataset.models);
+          const defaultKey = historyState.metric === 'tokens' ? 'tokensIn' : 'requests';
+          const sortKey = historyState.detailSort.key || defaultKey;
+          const sortDir = historyState.detailSort.key ? historyState.detailSort.dir : -1;
+          entries.sort((a, b) => {
+            if (sortKey === 'name') {
+              return a[0] < b[0] ? -sortDir : a[0] > b[0] ? sortDir : 0;
+            }
+            let va, vb;
+            if (sortKey === 'cachedRead') {
+              // Cache % is a ratio, not a raw value — sort by the percentage
+              va = a[1].tokensIn > 0 ? a[1].cachedRead / a[1].tokensIn : 0;
+              vb = b[1].tokensIn > 0 ? b[1].cachedRead / b[1].tokensIn : 0;
+            } else {
+              va = a[1][sortKey] || 0;
+              vb = b[1][sortKey] || 0;
+            }
+            return (va - vb) * sortDir;
+          });
+          // Re-render rows
+          tbody.innerHTML = entries.map(([name, m]) => {
+            const mReqsCell = m.requests === m.weighted ? m.requests.toLocaleString() : m.requests.toLocaleString() + ' → ' + m.weighted.toLocaleString(undefined, { maximumFractionDigits: 1, minimumFractionDigits: 1 });
+            const mCachePct = m.tokensIn > 0 ? ((m.cachedRead / m.tokensIn) * 100).toFixed(1) + '%' : '--';
+            return `<tr>
+              <td style="border-color:rgba(255,255,255,0.03);color:rgba(255,255,255,0.7);padding-left:16px">${escapeHtml(name)}</td>
+              <td style="border-color:rgba(255,255,255,0.03);text-align:right;font-variant-numeric:tabular-nums">${mReqsCell}</td>
+              <td style="border-color:rgba(255,255,255,0.03);text-align:right;font-variant-numeric:tabular-nums">${formatCompact(m.tokensIn)}</td>
+              <td style="border-color:rgba(255,255,255,0.03);text-align:right;font-variant-numeric:tabular-nums">${formatCompact(m.tokensOut)}</td>
+              <td style="border-color:rgba(255,255,255,0.03);text-align:right;font-variant-numeric:tabular-nums">${mCachePct}</td>
+              <td style="border-color:rgba(255,255,255,0.03)"></td>
+            </tr>`;
+          }).join('');
+          // Update sort icons on all headers in this table
+          th.closest('thead').querySelectorAll('.history-detail-th').forEach(h => {
+            const hKey = h.dataset.sortkey;
+            const active = historyState.detailSort.key === hKey || (!historyState.detailSort.key && hKey === defaultKey);
+            const dir = active ? (historyState.detailSort.key ? historyState.detailSort.dir : -1) : 0;
+            const label = h.textContent.replace(/[\s\u200b]+[\u25b4\u25be].*$/, '').trim() || h.textContent.split(' ')[0];
+            // Rebuild header text + icon
+            const textNode = h.firstChild;
+            const baseLabel = hKey === 'name' ? 'Model' : hKey === 'requests' ? 'Requests' : hKey === 'tokensIn' ? 'Tokens In' : hKey === 'tokensOut' ? 'Tokens Out' : 'Cache %';
+            h.innerHTML = baseLabel + (active ? (dir < 0 ? ' <i class="bi bi-caret-down-fill" style="font-size:0.45rem"></i>' : ' <i class="bi bi-caret-up-fill" style="font-size:0.45rem"></i>') : '');
+          });
+        });
+      });
+      // Auto-expand detail row when a bar is selected
+      if (historyState.selectedBucket) {
+        const tr = container.querySelector(`tr[data-bucket="${CSS.escape(historyState.selectedBucket)}"]`);
+        if (tr) tr.click();
+      }
+    }
+    function renderHistory() {
+      const data = lastHistoryData || {};
+      const buckets = data.buckets || [];
+      const groups = groupHistoryBuckets(buckets);
+      const totals = aggregateHistoryTotals(buckets);
+      document.getElementById('histTotalRequests').textContent = formatCompact(totals.requests);
+      document.getElementById('histCachedPct').textContent = totals.cachedPct.toFixed(1) + '%';
+      document.getElementById('histErrorRate').textContent = totals.errorRate.toFixed(1) + '%';
+      document.getElementById('histPeakConc').textContent = totals.peakConc.toString();
+      document.getElementById('histTokensIn').textContent = formatCompact(totals.tokensIn);
+      document.getElementById('histTokensOut').textContent = formatCompact(totals.tokensOut);
+      renderHistoryChart(groups);
+      historyState.totalRows = groups.flatMap(g => g.rows).length;
+      if (!historyState.selectedBucket) renderHistoryTable(groups);
+    }
     function setRefreshInterval(seconds) {
       if (usageIntervalId) clearInterval(usageIntervalId);
+      if (historyIntervalId) clearInterval(historyIntervalId);
       const ms = parseInt(seconds) * 1000;
       usageIntervalId = setInterval(() => { fetchUsage(); fetchConcurrency(); }, ms);
+      historyIntervalId = setInterval(() => { fetchHistory(); }, HISTORY_REFRESH_MS);
       document.querySelectorAll('.btn-refresh').forEach(btn => {
         const isActive = btn.dataset.refresh === seconds.toString();
         btn.classList.toggle('active', isActive);
@@ -819,13 +1483,13 @@
       });
     }
     async function checkHealth() {
-      try{const r=await fetch('/healthz');const d=await r.json();if(d.ok){proxyData=d;document.getElementById('statusIndicator').className='status-indicator status-online';document.getElementById('statusText').textContent='Online';renderTokenPools();updateStats();showToast('Health OK');}else throw Error();}catch{document.getElementById('statusIndicator').className='status-indicator status-offline';document.getElementById('statusText').textContent='Offline';showToast('Health check failed','danger');}
+      try{const r=await fetch('/healthz');const d=await r.json();if(d.ok){proxyData=d;document.getElementById('statusIndicator').className='status-indicator status-online';renderTokenPools();updateStats();showToast('Health OK');}else throw Error();}catch{document.getElementById('statusIndicator').className='status-indicator status-offline';showToast('Health check failed','danger');}
     }
     async function testConnection() {
       try{const r=await fetch('/v1/models');if(r.ok){const d=await r.json();showToast('Connected! {n} models'.replace('{n}', d.data?.length||0));}else throw Error();}catch{showToast('Connection test failed','danger');}
     }
     function updateStatus() {
-      fetch('/healthz').then(r=>r.json()).then(d=>{proxyData=d;document.getElementById('statusIndicator').className=d.ok?'status-indicator status-online':'status-indicator status-offline';document.getElementById('statusText').textContent=d.ok?'Online':'Offline';renderTokenPools();updateStats();}).catch(()=>{document.getElementById('statusIndicator').className='status-indicator status-offline';document.getElementById('statusText').textContent='Offline';});
+      fetch('/healthz').then(r=>r.json()).then(d=>{proxyData=d;document.getElementById('statusIndicator').className=d.ok?'status-indicator status-online':'status-indicator status-offline';renderTokenPools();updateStats();}).catch(()=>{document.getElementById('statusIndicator').className='status-indicator status-offline';});
     }
 
     function restartProxy() {
@@ -833,14 +1497,12 @@
       const btn = document.getElementById('restartBtn');
       btn.disabled = true; btn.innerHTML = '<i class="bi bi-arrow-counterclockwise me-2"></i>' + 'Restarting...';
       document.getElementById('statusIndicator').className = 'status-indicator status-reconnecting';
-      document.getElementById('statusText').textContent = 'Reconnecting...';
       fetch('/api/restart', { method: 'POST' }).then(r => r.json()).then(d => showToast(d.message || 'Restarting...')).catch(() => {});
       let attempts = 0;
       const iv = setInterval(() => {
         attempts++;
         if (attempts >= 30) {
           document.getElementById('statusIndicator').className = 'status-indicator status-offline';
-          document.getElementById('statusText').textContent = 'Offline';
           btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-counterclockwise me-2"></i>' + 'Restart Proxy';
           showToast('Proxy did not come back', 'danger'); clearInterval(iv);
           return;
@@ -848,7 +1510,6 @@
         fetch('/healthz').then(r => r.json()).then(d => {
           if (d.ok) {
             document.getElementById('statusIndicator').className = 'status-indicator status-online';
-            document.getElementById('statusText').textContent = 'Online';
             btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-counterclockwise me-2"></i>' + 'Restart Proxy';
             showToast('Proxy is back online!', 'success'); clearInterval(iv);
           }
@@ -869,6 +1530,9 @@
       updateStatus();
       setInterval(updateStatus,15000);
       fetchUsage(); fetchConcurrency();
+      setTimeout(() => { setHistoryRange('7d'); }, 0);
+      document.querySelectorAll('.btn-hist-gran').forEach(btn => btn.classList.toggle('active', btn.dataset.gran === historyState.granularity));
+      setHistoryMetric(historyState.metric);
       setRefreshInterval('30');
       document.getElementById('modelsContainer').addEventListener('click', (e) => {
         const tag = e.target.closest('.model-tag');
@@ -876,6 +1540,8 @@
       });
       setTimeout(()=>window.dispatchEvent(new Event('resize')),1000);
       setTimeout(()=>window.dispatchEvent(new Event('resize')),3000);
+      window.addEventListener('resize', layoutStatGrids);
+      layoutStatGrids();
     });
     function hideDashboardUntilWallpaper() {
       if (document.getElementById('wallpaperLoader')) return;

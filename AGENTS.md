@@ -1,11 +1,11 @@
-# UMANS-Proxy — Developer Guide
+# UMANS-Dash — Developer Guide
 
 ## Project Structure
 
 ```
-UMANS-PROXY/
-├── proxy.js              # Main proxy implementation + request router (~3430 lines)
-├── dashboard.html        # Dashboard with usage/concurrency cards, Quick Settings, key management, model list
+UMANS-DASH/
+├── proxy.js              # Main proxy implementation + request router (~3324 lines)
+├── dashboard.html        # Dashboard with usage/concurrency/history cards, Quick Settings, key management, model list (~1556 lines)
 ├── .config/
 │   └── config.json       # Runtime configuration (API key, KEYS array, enabled models, etc.)
 ├── .cache/               # Cached assets (auto-created)
@@ -13,6 +13,7 @@ UMANS-PROXY/
 │   ├── wallpaper-haven.jpg      # Cached Wallhaven wallpaper
 │   └── wallpaper-freegen.jpg   # Current FreeGen AI wallpaper (pending swap file: wallpaper-freegen.pending.jpg)
 ├── .logs/                # HTTP error logs (auto-created, per-session rotating files)
+├── screenshots/          # Dashboard screenshots for README
 ├── package.json          # Project metadata (MIT, no deps)
 ├── LICENSE               # MIT license
 ├── README.md             # User documentation
@@ -21,7 +22,7 @@ UMANS-PROXY/
 
 ## Key Components
 
-### 1. Constants & Config (proxy.js:1-86, 452-581)
+### 1. Constants & Config (proxy.js:1-120, 236-396)
 
 - `UMANS_API_BASE` — `https://api.code.umans.ai/v1`
 - `API_KEY_ENV_VAR` — `UMANS_API_KEY`
@@ -30,13 +31,14 @@ UMANS-PROXY/
 - `IS_BUN` — Detected at runtime (`typeof Bun !== 'undefined'`)
 - `RUNTIME_VERSION` — Bun or Node version string
 - Error logging system (`initErrorLogger`, `redactHeaders`, `redactBodyJson`, `logHttpError`) — writes rotating error logs to `.logs/errors-*.log` with header/body redaction
-- `loadConfig()` (line 452) — Loads `.config/config.json` with env var overrides (`LISTEN_ADDR`, `UPSTREAM_BASE_URL`, `REQUEST_TIMEOUT`, `UMANS_API_KEY`, `API_KEYS`, `CACHE_TTL`, `CACHE_MAX_SIZE`, `CACHE_ENABLED`, `OVERRIDE_CONCURRENCY`, `MAX_IMAGES`, `SLEEV_ENABLED`, `SHELL_TOOL_GUARD`, `VISION_HANDOFF_ENABLED`, `VISION_HANDOFF_MODEL`, `VISION_HANDOFF_PROMPT`). Loads the `KEYS` array from config for key pool persistence.
-- `saveConfig()` (line 545) / `debouncedSaveConfig()` (line 575) — Writes config (debounced 500ms), including `KEYS` array persistence
-- `parseDuration()` (line 523) — Parses strings like `15m`, `6h`, `30s` to ms
-- `maskToken(key)` (line 537) — Masks an API key for display as `prefix...suffix`
-- `parseListenPort(addr)` (line 541) — Parses `LISTEN_ADDR` into a port number
+- `ImageHandoffCache` class (line 236) — LRU cache for vision handoff image descriptions. Keyed by SHA-256 hash of image data URI. 24h TTL, 50 entries max. Stats exposed in `/healthz`.
+- `loadConfig()` (line 277) — Loads `.config/config.json` with env var overrides (`LISTEN_ADDR`, `UPSTREAM_BASE_URL`, `REQUEST_TIMEOUT`, `UMANS_API_KEY`, `API_KEYS`, `OVERRIDE_CONCURRENCY`, `MAX_IMAGES`, `SLEEV_ENABLED`, `VISION_HANDOFF_ENABLED`, `VISION_HANDOFF_MODEL`, `VISION_HANDOFF_PROMPT`, `VISION_HANDOFF_CACHE_ENABLED`, `VISION_HANDOFF_CACHE_TTL`). Loads the `KEYS` array from config for key pool persistence.
+- `parseDuration()` (line 343) — Parses strings like `15m`, `6h`, `30s` to ms
+- `maskToken(key)` (line 357) — Masks an API key for display as `prefix...suffix`
+- `parseListenPort(addr)` (line 361) — Parses `LISTEN_ADDR` into a port number
+- `saveConfig()` (line 365) / `debouncedSaveConfig()` (line 394) — Writes config (debounced 500ms), including `KEYS` array persistence
 
-### 2. Global State (proxy.js:88-375)
+### 2. Global State (proxy.js:88-213)
 
 | Variable | Type | Purpose |
 |---|---|---|
@@ -63,63 +65,51 @@ UMANS-PROXY/
 | `lastConcurrency` | Object | Last fetched concurrency data `{ concurrent, limit, hard_cap, user_id }` |
 | `throttledCount` | Number | Proxy-side 503 queue-full rejection counter (reset on new usage window) |
 | `throttledWindowStart` | String/null | Tracks current usage window start for throttle-reset logic |
+| `imageHandoffCache` | ImageHandoffCache | LRU cache for vision handoff image descriptions (24h TTL, 50 entries) |
+| `usageHistoryCache` | Object | Cached upstream usage history data (5-min TTL) |
 
-### 3. Shell-Tool Guard (proxy.js:120-288) — disabled by default
-
-**Config key**: `SHELL_TOOL_GUARD` (default `false`). Toggled via dashboard "Git Guard" in Quick Settings.
-
-`isGitCommand(cmd)` detects shell commands that start with or invoke `git` (`git clean -fd`, `bash -c "git status"`, `cmd /c git ...`, quoted Windows paths to `git.exe`, etc.) while ignoring false positives such as `echo git` or `python script.py git`.
-
-`sanitizeShellToolCall(tc)` and `sanitizeChatCompletionResponse(body)` modify returned assistant `tool_calls` whose tool name matches `bash | shell | run_command_in_terminal | execute_command | run_in_terminal | send_to_terminal | run_vscode_command | create_and_run_task | terminal`. When a matched command is detected, the tool argument is rewritten to `echo "BLOCKED: git commands are disabled by proxy policy"` before the response reaches the client.
-
-SSE streaming responses are also sanitized via `sanitizeSseResponse(text)` (line 226), which buffers the full stream, assembles partial tool_calls, runs the shell guard, and re-emits sanitized SSE events. **When the guard is enabled, the OpenAI SSE path buffers the entire upstream response before sending it to the client — real-time streaming is disabled.** When the guard is disabled, SSE responses are piped directly to the client for real-time streaming.
-
-Applies to (only when enabled):
-- Non-streaming chat responses
-- Streaming SSE responses (buffered and re-emitted)
-- Cached responses on cache hit
-
-### 3b. Anthropic Messages API Pass-Through (proxy.js:2301-2412)
+### 3. Anthropic Messages API Pass-Through (proxy.js:2218-2332)
 
 The proxy exposes `/v1/messages` (and `/messages`) for Anthropic-compatible clients (e.g., opencode with `@ai-sdk/anthropic`). Since the upstream UMANS API already natively supports Anthropic format at `/v1/messages`, the proxy **passes through** requests directly without translation:
 
-- `proxyAnthropicRequest()` (line 2301) — Acquires a key from the pool (with session affinity), forwards the Anthropic request body to `upstream.messages()`, and pipes the response directly back to the client via `await pipeBodyToResponse()`.
-- `handleAnthropicMessages()` (line 2390) — Entry point for `/v1/messages`; applies `limitImagesInMessages` cap, then queues or dispatches.
-- No shell-tool guard or cache for Anthropic pass-through (upstream handles these).
+- `proxyAnthropicRequest()` (line 2218) — Acquires a key from the pool (with session affinity), forwards the Anthropic request body to `upstream.messages()`, and pipes the response directly back to the client via `await pipeBodyToResponse()`.
+- `handleAnthropicMessages()` (line 2308) — Entry point for `/v1/messages`; applies `limitImagesInMessages` cap, then queues or dispatches.
+- No response cache (removed — see section 3c for the only caching that remains).
 - **Vision handoff** is applied before the upstream call: if the resolved model has `supports_vision: "via-handoff"`, images are extracted and sent to the handoff model (default `umans-coder`), then replaced with text descriptions in the payload.
-- **Key health**: `markHealthy()` is called on success (line 2379); `markUnhealthy()` only on 503 upstream or network-level fetch failures (not on 500, which is usually a payload issue).
+- **Key health**: `markHealthy()` is called on success; `markUnhealthy()` only on 503 upstream or network-level fetch failures (not on 500, which is usually a payload issue).
 - **Concurrency queue**: Anthropic requests participate in the same bounded queue as OpenAI requests.
 
-### 3c. Vision Handoff (proxy.js:1139-1295)
+### 3b. Vision Handoff (proxy.js:1038-1212)
 
 Models whose `capabilities.supports_vision === "via-handoff"` (e.g. `umans-glm-5.2`, `umans-glm-5.1`) cannot process images natively. The proxy intercepts these requests and delegates image analysis to a vision-capable handoff model:
 
-1. `needsVisionHandoff(resolvedModel)` (line 1154) — checks `modelInfoMap` for `via-handoff` flag.
-2. `collectImageParts(payload)` (line 1173) — walks `payload.system` and `payload.messages`, collecting image parts in both OpenAI (`image_url`) and Anthropic (`image` with `source.base64`/`source.url`) formats.
-3. `analyzeImageViaHandoff(dataUri, slot, ...)` (line 1219) — makes a non-streaming `chatCompletions` call to the handoff model (default `umans-coder`) with a system analysis prompt + the image.
-4. `performVisionHandoff(payload, resolvedModel, ...)` (line 1270) — replaces each image part in-place with a `{type: "text", text: "[Image content — analyzed by vision module, shown as text because the active model cannot see images:]\n<description>"}` block. The label makes clear to the primary model that the text is authoritative image content, not user commentary.
+1. `needsVisionHandoff(resolvedModel)` (line 1038) — checks `modelInfoMap` for `via-handoff` flag.
+2. `collectImageParts(payload)` (line 1057) — walks `payload.system` and `payload.messages`, collecting image parts in both OpenAI (`image_url`) and Anthropic (`image` with `source.base64`/`source.url`) formats.
+3. `analyzeImageViaHandoff(dataUri, slot, ...)` (line 1103) — makes a non-streaming `chatCompletions` call to the handoff model (default `umans-coder`) with a system analysis prompt + the image. If the handoff cache is enabled, checks `imageHandoffCache` first (SHA-256 of image data URI). On cache miss, calls upstream and caches the description on success.
+4. `performVisionHandoff(payload, resolvedModel, ...)` (line 1171) — replaces each image part in-place with a `{type: "text", text: "[Image content — analyzed by vision module, shown as text because the active model cannot see images:]\n<description>"}` block. The label makes clear to the primary model that the text is authoritative image content, not user commentary.
 
-**Config keys**: `VISION_HANDOFF_ENABLED` (default `true`), `VISION_HANDOFF_MODEL` (default `umans-coder`), `VISION_HANDOFF_PROMPT` (default built-in analysis prompt when empty).
+**Config keys**: `VISION_HANDOFF_ENABLED` (default `false`), `VISION_HANDOFF_MODEL` (default `umans-coder`), `VISION_HANDOFF_PROMPT` (default built-in analysis prompt when empty), `VISION_HANDOFF_CACHE_ENABLED` (default `false`), `VISION_HANDOFF_CACHE_TTL` (default `24h`).
 
-Applied to both the OpenAI path (`proxyChatRequest`) and the Anthropic path (`proxyAnthropicRequest`) after model resolution and before the upstream call. On the OpenAI path, the handoff runs after the cache check, so cache hits skip the handoff entirely.
-- Concurrency queue supports Anthropic requests alongside OpenAI requests.
+Applied to both the OpenAI path (`proxyChatRequest`) and the Anthropic path (`proxyAnthropicRequest`) after model resolution and before the upstream call.
 
-### 3d. Sleev Context-Compression Gateway (proxy.js:1299-1517)
+The vision handoff cache (`ImageHandoffCache`) stores image analysis results keyed by SHA-256 hash of the image data URI, so repeated identical images skip re-analysis within the TTL window. Cache stats (hits, misses, entries) are exposed in `/healthz` and rendered in the dashboard's Quick Settings under the Handoff Cache toggle.
 
-The proxy manages an optional [Sleev](https://sleev.ai) gateway that compresses context before forwarding to the proxy. Topology: `opencode → Sleev (compress) → UMANS-PROXY → UMANS`.
+### 3c. Sleev Context-Compression Gateway (proxy.js:1214-1424)
 
-- `resolveSleevBinary()` (line 1308) — Resolves the Sleev binary from `node_modules/.bin/sleev` or global PATH.
-- `isSleevLoggedIn()` / `isSleevGatewayHealthy()` (lines 1321, 1332) — CLI status checks.
-- `startSleevSignIn()` (line 1353) — Spawns `sleev auth login` for interactive OAuth browser sign-in (180s timeout).
-- `spawnSleevGateway()` (line 1390) — Binds the gateway to `127.0.0.1:17321` and spawns the daemon process.
-- `startSleev()` (line 1443) — Full startup: binary resolution → sign-in check → setup → gateway spawn → health wait.
-- `stopSleev()` (line 1495) — Kills gateway and sign-in child processes.
-- `getSleevStatus()` (line 1508) — Returns `{ enabled, ready, binary, lastError, loggedIn, gatewayBase }`.
+The proxy manages an optional [Sleev](https://sleev.ai) gateway that compresses context before forwarding to the proxy. Topology: `opencode → Sleev (compress) → UMANS-DASH → UMANS`.
+
+- `resolveSleevBinary()` (line 1214) — Resolves the Sleev binary from `node_modules/.bin/sleev` or global PATH.
+- `isSleevLoggedIn()` / `isSleevGatewayHealthy()` (lines 1227, 1238) — CLI status checks.
+- `startSleevSignIn()` (line 1259) — Spawns `sleev auth login` for interactive OAuth browser sign-in (180s timeout).
+- `spawnSleevGateway()` (line 1296) — Binds the gateway to `127.0.0.1:17321` and spawns the daemon process.
+- `startSleev()` (line 1349) — Full startup: binary resolution → sign-in check → setup → gateway spawn → health wait.
+- `stopSleev()` (line 1401) — Kills gateway and sign-in child processes.
+- `getSleevStatus()` (line 1414) — Returns `{ enabled, ready, binary, lastError, loggedIn, gatewayBase }`.
 - **Config key**: `SLEEV_ENABLED` (default `false`). Env var: `SLEEV_ENABLED`.
 - When enabled and ready, `setupOpencodeConfig()` points opencode at the Sleev gateway (with `sleeve-harness` and `sleeve-base-url` headers) instead of the proxy directly, and disables opencode's own context pruning (`compaction.prune = false`).
 - Graceful shutdown hooks kill the Sleev gateway on SIGINT/SIGTERM/exit.
 
-### 4. Retry Logic (proxy.js:376-385, 2499-2623)
+### 4. Retry Logic (proxy.js:214-235, 2499-2520)
 
 `retryLoop(fn)` retries the upstream `/v1/chat/completions` request up to `MAX_RETRIES` times with escalating delays (`3s, 6s, 9s…`).
 
@@ -130,18 +120,7 @@ The proxy manages an optional [Sleev](https://sleev.ai) gateway that compresses 
 - On each retry the current key is marked unhealthy so the key pool rotates to the next healthy key. On retry attempts after the first, a fresh key is acquired from the pool if multiple keys are available (key rotation on retry).
 - Non-retryable HTTP errors (e.g. 400, 401, 404, 429 without a configured rate-limit map) are returned immediately.
 
-
-### 4. Response Cache (proxy.js:404-450)
-
-LRU cache for non-streaming LLM responses using Map insertion order.
-- **Key**: MD5 of `(model + stream_flag + system + messages + tools)`
-- **TTL**: Configurable (default 60s), **Max size**: default 100
-- **Stats**: `hits`, `misses`, `evictions`
-- `cacheKey(payload, model)` (line 442) — builds MD5 hash
-- `GET/DELETE /api/cache` — stats/clear
-- Cached responses are passed through the shell-tool guard before being returned to the client.
-
-### 6. Key Pool (proxy.js:990-1074)
+### 5. Key Pool (proxy.js:855-948)
 
 Round-robin multi-key pool with cooldown/unhealthy marking. The `KEYS` array is persisted in config and loaded on startup.
 - `acquire(preferredIndex)` — Round-robins, returns `{ key, name, index }`, sets `config.apiKey` + `upstream.apiKey`. Uses a mutex for thread-safe acquisition. Supports session affinity via `preferredIndex`.
@@ -150,114 +129,120 @@ Round-robin multi-key pool with cooldown/unhealthy marking. The `KEYS` array is 
 - `get state()` — Returns array with masked tokens (first 10 + `...` + last 4)
 - `get total()` / `get healthyCount()` — Pool stats
 
-### 7. Upstream Client & Model Catalog (proxy.js:1519-1616)
+### 6. Upstream Client & Model Catalog (proxy.js:1425-1674)
 
-- `UpstreamClient` class (line 1519) with `getUserInfo()` (GET `/v1/models/info`, 10s timeout), `chatCompletions(body)` (POST `/v1/chat/completions`), and `messages(body)` (POST `/v1/messages` for Anthropic pass-through).
+- `UpstreamClient` class (line 1425) with `getUserInfo()` (GET `/v1/models/info`, 10s timeout), `chatCompletions(body)` (POST `/v1/chat/completions`), and `messages(body)` (POST `/v1/messages` for Anthropic pass-through).
 - `UPSTREAM_AGENT` — Keep-alive HTTPS agent (128 sockets, 60s keepalive, 300s timeout)
-- `fetchModelCatalog()` (line 1578) — GET `/v1/models/info` with 15s timeout
-- `getCatalogData()` (line 1592) — Cached 5-min catalog fetcher with dedup promise (`modelCatalogFetchPromise`) to prevent concurrent fetch races. Populates `modelDisplayNameMap` and `modelInfoMap`.
-- `fetchUpstreamModels()` (line 2188) — Fetches `/v1/models` for pricing data (5-min cache)
+- `fetchModelCatalog()` (line 1484) — GET `/v1/models/info` with 15s timeout
+- `getCatalogData()` (line 1498) — Cached 5-min catalog fetcher with dedup promise (`modelCatalogFetchPromise`) to prevent concurrent fetch races. Populates `modelDisplayNameMap` and `modelInfoMap`.
+- `fetchModelsDevCatalog()` (line 1524) — Fetches models.dev catalog for reasoning metadata enrichment.
+- `fetchUpstreamModels()` (line 2106) — Fetches `/v1/models` for pricing data (5-min cache)
 
-### 8. Tool Schema Normalization (proxy.js:1769-1874)
+### 7. Tool Schema Normalization (proxy.js:1675-1780)
 
 Normalizes JSON Schema in tools to handle `$ref`, `$defs`, `definitions`, nullable patterns.
 - Key functions: `normalizeToolSchemas`, `normalizeSchemaMap`, `tryResolveRef`, `simplifyNullableCombinator`, `normalizeTypeField`, `normalizeEnumField`
 
-### 9. Stream/Body Utilities (proxy.js:1876-1953)
+### 8. Stream/Body Utilities (proxy.js:1782-1870)
 
 - `isNodeStream(body)` — Duck-type check for Node.js streams
 - `readBodyText(body)` — Handles Node streams, Web ReadableStreams, and async iterables
 - `pipeBodyToResponse(body, res)` — Pipes upstream response to HTTP response with abort handling, cleanup, and **backpressure handling**: when `res.write()` returns `false` and the body is a Node stream, the upstream is paused (`body.pause()`) and resumed on the `res` `drain` event. Client disconnects are detected via `res.on('close')`, which destroys the upstream body.
 
-### 10. HTTP Handler Helpers (proxy.js:2110-2158)
+### 9. HTTP Handler Helpers (proxy.js:2023-2073)
 
 - `authorized(req)` — Checks `x-api-key` or `Authorization: Bearer ***` against `config.apiKeys`
 - `readBody(req)` — Promisified chunk collector with `MAX_BODY_SIZE` cap
 - `writeJSON(res, status, payload)` — Safe JSON response writer (handles encode failures)
 - `writeOpenAIError(res, status, message, type, code)` — OpenAI-format error response
-- `writeAnthropicError(res, status, message, type)` — Anthropic-format error response (line 292)
-- `writeAnthropicPassthroughError(res, status, body)` — Parses upstream Anthropic error body (line 298)
-- `writePassthroughError(res, status, body)` — OpenAI-format passthrough error (line 2625)
+- `writeAnthropicError(res, status, message, type)` — Anthropic-format error response (line 128)
+- `writeAnthropicPassthroughError(res, status, body)` — Parses upstream Anthropic error body (line 134)
+- `writePassthroughError(res, status, body)` — OpenAI-format passthrough error (line 2520)
 
-### 11. Core HTTP Handlers (proxy.js:2160-2629)
+### 10. Core HTTP Handlers (proxy.js:2074-2556)
 
-- `handleHealthz` (line 2160) — Returns uptime, token_state, models_count, runtime, cache stats, sleev status
-- `handleModels` (line 2209) — OpenAI-format model list from catalog. **Pricing format**: upstream per-million prices are converted to per-token (divided by 1,000,000) for Hermes/opencode compatibility. Each model entry includes `context_length`, `max_output_tokens`, `display_name`, and `pricing` fields when available. The output token limit is exposed as a top-level `max_output_tokens` field (not nested inside a `limit` object) to avoid key collisions with Hermes' pricing alias extractor, which walks all nested dicts and would otherwise match `limit.output` as a pricing value.
-- `processQueue()` (line 2263) — Dequeues from `requestQueue` while `activeRequests < limit`. Dispatches to `proxyAnthropicRequest` or `proxyChatRequest` based on `format`.
-- `handleChatCompletions` (line 2281) — Parses body, checks queue overflow (`MAX_QUEUE_SIZE`), queues or executes via `proxyChatRequest`
-- `handleAnthropicMessages` (line 2390) — Entry point for `/v1/messages`; applies image cap, queues or executes via `proxyAnthropicRequest`
-- `proxyChatRequest` (line 2436) — Full proxy pipeline: key acquire → session label → reasoning strip → image-attachment limit (`limitImagesInMessages`, skips handoff models) → cache check → model resolve → tool normalize → reasoning caps → `normalizeThinkingPayload` (camelCase → snake_case) → SSE keepalive flush (if vision handoff will run on a streaming request) → vision handoff → rate limit → **retry-wrapped upstream call** (see Retry Logic) → shell-tool guard → stream/non-stream response. The full request body of the first request in a new session is logged to the console. HTTP errors are logged to `.logs/` via `logHttpError`.
-- `normalizeThinkingPayload(payload)` — Rewrites camelCase `budgetTokens` back to snake_case `budget_tokens` for UMANS Pydantic compatibility. The `@ai-sdk/openai-compatible` provider camelCases snake_case keys from opencode.json, but the upstream rejects camelCase. Applied on both OpenAI and Anthropic paths.
+- `handleHealthz` (line 2074) — Returns uptime, token_state, models_count, runtime, sleev status, vision handoff status + cache stats
+- `handleModels` (line 2127) — OpenAI-format model list from catalog. **Pricing format**: upstream per-million prices are converted to per-token (divided by 1,000,000) for Hermes/opencode compatibility. Each model entry includes `context_length`, `max_output_tokens`, `display_name`, and `pricing` fields when available. The output token limit is exposed as a top-level `max_output_tokens` field (not nested inside a `limit` object) to avoid key collisions with Hermes' pricing alias extractor, which walks all nested dicts and would otherwise match `limit.output` as a pricing value.
+- `processQueue()` (line 2178) — Dequeues from `requestQueue` while `activeRequests < limit`. Dispatches to `proxyAnthropicRequest` or `proxyChatRequest` based on `format`.
+- `handleChatCompletions` (line 2197) — Parses body, checks queue overflow (`MAX_QUEUE_SIZE`), queues or executes via `proxyChatRequest`
+- `handleAnthropicMessages` (line 2308) — Entry point for `/v1/messages`; applies image cap, queues or executes via `proxyAnthropicRequest`
+- `proxyChatRequest` (line 2333) — Full proxy pipeline: key acquire → session label → reasoning strip → image-attachment limit (`limitImagesInMessages`, skips handoff models) → model resolve → tool normalize → reasoning caps → `normalizeThinkingPayload` (camelCase → snake_case) → SSE keepalive flush (if vision handoff will run on a streaming request) → vision handoff → rate limit → **retry-wrapped upstream call** (see Retry Logic) → stream/non-stream response. The full request body of the first request in a new session is logged to the console. HTTP errors are logged to `.logs/` via `logHttpError`.
+- `normalizeThinkingPayload(payload)` (line 967) — Rewrites camelCase `budgetTokens` back to snake_case `budget_tokens` for UMANS Pydantic compatibility. The `@ai-sdk/openai-compatible` provider camelCases snake_case keys from opencode.json, but the upstream rejects camelCase. Applied on both OpenAI and Anthropic paths.
+- **SSE streaming path**: The upstream SSE stream is piped directly to the client via `pipeBodyToResponse()` for real-time streaming, with client-disconnect detection (the upstream body is destroyed if the client closes mid-stream).
 - **SSE keepalive during vision handoff** — When a streaming request will trigger vision handoff, the proxy flushes SSE headers + a keepalive comment before the handoff runs. This prevents client timeouts and duplicate sessions from retries while the handoff makes its multi-second round-trip. `writeJSON` detects `headersSent` and emits errors as SSE events instead of crashing.
-  - **SSE streaming path (two modes)**: When `SHELL_TOOL_GUARD` is **enabled**, the upstream SSE stream is fully buffered (with client-disconnect detection — the upstream body is destroyed if the client closes mid-stream), then sanitized via `sanitizeSseResponse()` and sent as a single response. When **disabled**, the SSE stream is piped directly to the client via `pipeBodyToResponse()` for real-time streaming.
-- `proxyAnthropicRequest` (line 2301) — Anthropic pass-through: key acquire → session label → model resolve → `normalizeThinkingPayload` → vision handoff → upstream `messages()` call → `await pipeBodyToResponse()` → key health marking.
-- `validateApiKey()` (line 2631) — Calls `getUserInfo()`, populates `userInfoCache` + `modelDisplayNameMap` + `modelInfoMap`, returns boolean
+- `proxyAnthropicRequest` (line 2218) — Anthropic pass-through: key acquire → session label → model resolve → `normalizeThinkingPayload` → vision handoff → upstream `messages()` call → `await pipeBodyToResponse()` → key health marking.
+- `validateApiKey()` (line 2526) — Calls `getUserInfo()`, populates `userInfoCache` + `modelDisplayNameMap` + `modelInfoMap`, returns boolean
 
-### 12. Request Router (proxy.js:2645-3052)
+### 11. Request Router (proxy.js:2557-2955)
 
 | Route | Methods | Description |
 |---|---|---|
 | `/` or `/dashboard` | GET | Serve `dashboard.html` with current wallpaper embedded as base64 in `<head>` to prevent white flash. Kicks off background FreeGen refresh after serving. |
-| `/api/config` | GET/POST | Config read/write (masks API key). POST updates keys, wallpaperSource, sleevEnabled, etc. |
+| `/api/config` | GET/POST | Config read/write (masks API key). POST updates keys, wallpaperSource, sleevEnabled, visionHandoffEnabled, visionHandoffCacheEnabled, etc. |
 | `/api/validate` | GET | Validate API key → `{ valid, hasApiKey }` |
 | `/api/models` | GET | Returns `{ models, disabled_models, model_display_names }` |
 | `/api/bg` | GET | Bing wallpaper proxy (peapix.com), cached daily |
 | `/api/bg-wallhaven` | GET | Wallhaven wallpaper proxy, cached hourly |
 | `/api/bg-freegen` | GET/POST | FreeGen AI wallpaper generator. `GET` returns current cached wallpaper; `POST` generates and returns new image (`prompt`, `ratio`, `wait` JSON body). Background generation writes to `.cache/wallpaper-freegen.pending.jpg` and atomically swaps to `.cache/wallpaper-freegen.jpg` when done. |
 | `/api/keys` | GET/POST | Multi-key CRUD (add/update/delete). Persists `KEYS` array to config. |
-| `/api/cache` | GET/DELETE | Cache stats/clear |
 | `/api/umans/usage` | GET | UMANS usage data (proxied from upstream `/usage` with 5-min cache; `?fresh=1` bypasses cache) |
+| `/api/umans/usage-history` | GET | UMANS usage history (proxied from upstream `/usage/history` with 5-min cache; `?fresh=1` bypasses cache). Supports `from`, `to`, `granularity`, `scope` query params. |
 | `/api/umans/concurrency` | GET | Concurrent sessions, limit, hard_cap, active count, queue depth, user_id (`?fresh=1` bypasses cache) |
+| `/api/umans/user` | GET | UMANS user info |
 | `/api/sleev` | GET/POST | Get Sleev gateway status / toggle Sleev on/off |
 | `/api/restart` | POST | Triggers `process.exit(42)` after 500ms (server.close + graceful shutdown) |
-| `/healthz` | GET | Health check (includes sleev status) |
+| `/healthz` | GET | Health check (includes sleev status, vision handoff status + cache stats) |
 | `/v1/models` | GET | OpenAI-format models (pricing in per-token format) |
 | `/v1/models/info` | GET | Raw model catalog (modelInfoMap) |
 | `/v1/chat/completions` | POST | OpenAI chat (concurrency-queued, bounded) |
 | `/v1/messages` or `/messages` | POST | Anthropic Messages API (pass-through, concurrency-queued) |
 
-### 13. Opencode Config Discovery & Setup (proxy.js:3054-3259)
+### 12. Opencode Config Discovery & Setup (proxy.js:2960-3180)
 
-- `discoverOpencodeConfigs()` (line 3054) — Native filesystem discovery on Windows: scans `C:\Users` for directories and checks each for `.opencode/opencode.json` and `.config/opencode/opencode.json`, plus the `systemprofile` variant. Falls back to `~/.config/opencode/` and `~/.opencode/`. Non-Windows: returns existing parent dirs of the two fallback paths. Results are cached 5 minutes.
-- `debouncedSetupOpencodeConfig()` (line 3116) — Debounced wrapper that prevents concurrent setup runs.
-- `setupOpencodeConfig()` (line 3132) — Writes ALL models from `getEffectiveModels()` to every discovered `opencode.json`. Each model entry includes `id`, `name`, `reasoning`, `temperature`, `tool_call`, `attachment`, `modalities`, and `limit` (context/output). Reasoning variants are built from UMANS capability levels. Creates `openconfig.b4umans.json` backup before first edit. Provider key: `umans`, uses `@ai-sdk/openai-compatible` (OpenAI-compatible, baseURL `http://localhost:{port}/v1`).
+- `discoverOpencodeConfigs()` (line 2960) — Native filesystem discovery on Windows: scans `C:\Users` for directories and checks each for `.opencode/opencode.json` and `.config/opencode/opencode.json`, plus the `systemprofile` variant. Falls back to `~/.config/opencode/` and `~/.opencode/`. Non-Windows: returns existing parent dirs of the two fallback paths. Results are cached 5 minutes.
+- `debouncedSetupOpencodeConfig()` (line 3022) — Debounced wrapper that prevents concurrent setup runs.
+- `setupOpencodeConfig()` (line 3053) — Writes ALL models from `getEffectiveModels()` to every discovered `opencode.json`. Each model entry includes `id`, `name`, `reasoning`, `temperature`, `tool_call`, `attachment`, `modalities`, and `limit` (context/output). Reasoning variants are built from UMANS capability levels. Creates `openconfig.b4umans.json` backup before first edit. Provider key: `umans`, uses `@ai-sdk/openai-compatible` (OpenAI-compatible, baseURL `http://localhost:{port}/v1`).
 - When Sleev is enabled and ready, the provider entry points to the Sleev gateway (`http://127.0.0.1:17321/v1`) with `sleeve-harness` and `sleeve-base-url` headers, and opencode's own context pruning is disabled (`compaction.prune = false`).
-- Integrates with [models.dev](https://models.dev) catalog (`fetchModelsDevCatalog`, line 1618) for reasoning metadata enrichment.
+- Integrates with [models.dev](https://models.dev) catalog (`fetchModelsDevCatalog`, line 1524) for reasoning metadata enrichment.
 
-### 14. Usage Tracking & Concurrency (proxy.js:948-1001)
+### 13. Usage Tracking, History & Concurrency (proxy.js:773-870)
 
-- `fetchUsage(fresh = false)` (line 958) — Fetches usage data from upstream `/usage` endpoint with 5-min cache. When `fresh` is `true`, bypasses the cache and always re-fetches. Also detects usage-window changes (via `window.started_at`) and resets `throttledCount` when a new window begins.
-- `fetchConcurrency(fresh = false)` (line 979) — Extracts `usage.concurrent_sessions`, `limits.concurrency.limit`, `limits.concurrency.hard_cap`, and `user_id` from cached usage data. Passes `fresh` through to `fetchUsage`.
-- `getEffectiveConcurrency()` (line 990) — Returns `{ concurrent, limit, hard_cap, overridden, user_id }`. The proxy gates on `hard_cap ?? limit` (burst capacity) before queueing. If `config.overrideConcurrency > 0`, the effective `hard_cap` is capped to `min(override, apiHardCap)` (or override when the API hard_cap is unknown).
-- `bumpThrottled()` (line 956) — Increments `throttledCount`; called when the concurrency queue is full and a 503 is returned to the client.
+- `bumpThrottled()` (line 773) — Increments `throttledCount`; called when the concurrency queue is full and a 503 is returned to the client.
+- `fetchUsageHistory({ from, to, granularity, scope }, fresh)` (line 779) — Fetches usage history from upstream `/usage/history` endpoint with 5-min cache. Supports `from`, `to`, `granularity` (day/hour), and `scope` query params. Cache key includes all params.
+- `fetchUsage(fresh = false)` (line 802) — Fetches usage data from upstream `/usage` endpoint with 5-min cache. When `fresh` is `true`, bypasses the cache and always re-fetches. Also detects usage-window changes (via `window.started_at`) and resets `throttledCount` when a new window begins.
+- `fetchConcurrency(fresh = false)` (line 823) — Extracts `usage.concurrent_sessions`, `limits.concurrency.limit`, `limits.concurrency.hard_cap`, and `user_id` from cached usage data. Passes `fresh` through to `fetchUsage`.
+- `getEffectiveConcurrency()` (line 837) — Returns `{ concurrent, limit, hard_cap, overridden, user_id }`. The proxy gates on `hard_cap ?? limit` (burst capacity) before queueing. If `config.overrideConcurrency > 0`, the effective `hard_cap` is capped to `min(override, apiHardCap)` (or override when the API hard_cap is unknown).
 - **Note**: `loginToApp()`, `EMAIL`, `PASSWORD`, and `APP_BASE` have been removed. The `/api/umans/login` and `/api/umans/logout` endpoints no longer exist.
 
-### 15. Dashboard (dashboard.html, ~881 lines)
+### 14. Dashboard (dashboard.html, ~1556 lines)
 
-- **5-hour Window Card** — Stat Cards: Requests, Throttled, Cached % (3 inline stat cards). Detail grid: Start Time, Tokens In, Tokens Out. No Window Progress bar. Throttled counts proxy-side 503 queue-full rejections (reset when usage window changes). A plan badge is shown in the card header when `plan.display_name` is available.
-- **Current Concurrency Card** — 4 stat cards: Active (green border), Queued (blue border), Limit (soft, yellow border), Burst (hard cap, orange border). Progress bar: solid fill = proxy active count (green in soft-cap region, gradient green→orange in burst region), dotted overlay = upstream concurrent sessions. Bottom border bars: yellow for soft-cap zone, orange for burst zone. Percentage is scaled to 100% at soft cap, 200% at hard cap. Detail grid: Queued (shown only when > 0). No badge in card header. User ID is displayed in the header bar (see below), not in the detail grid.
-- **User ID in header bar** — Displayed left of the Online indicator. Click-to-reveal masking via `.masked-userid` with `data-userid` attribute (dots displayed by default, click to reveal real ID, click again to re-mask).
+- **5-hour Window Card** — Stat Cards: Requests, Throttled, Cached % (3 inline stat cards using auto-fit grid). Detail grid: Start Time, Tokens In, Tokens Out. Throttled counts proxy-side 503 queue-full rejections (reset when usage window changes). A plan badge is shown in the card header when `plan.display_name` is available. Error % stat shows the true error rate in Tokens mode, filter-aware in Requests mode.
+- **Current Concurrency Card** — 4 stat cards: Active (green border), Queued (blue border), Limit (soft, yellow border), Burst (hard cap, orange border). Progress bar: solid fill = proxy active count (green in soft-cap region, gradient green→orange in burst region), dotted overlay = upstream concurrent sessions. Bottom border bars: yellow for soft-cap zone, orange for burst zone. Percentage is scaled to 100% at soft cap, 200% at hard cap. Detail grid: Queued (shown only when > 0). User ID is displayed in the header bar (click-to-reveal masking).
+- **Usage History Card** — Bar chart with Y-axis labels, dashed grid lines, and X-axis labels. Click a bar to filter the table to that date. Table shows consolidated per-date rows (Date, Requests, Tokens In, Tokens Out, Cache %, Peak) with clickable sort headers. Click a row to expand an animated detail table showing per-model breakdown (Model, Requests, Tokens In, Tokens Out, Cache %) with its own sortable headers. Metric toggle (Tokens/Requests) controls chart scale and default sort. Status legend (OK/Cancelled/Error) shown only in Requests mode; hidden in Tokens mode (only OK statuses shown).
+- **User ID in header bar** — Displayed left of the Online indicator. Click-to-reveal masking via `.masked-userid` with `data-userid` attribute.
 - **API Key section** — Key pool display with status badges. Collapsible. Shows key count badge in header.
 - **Models section** — View-only list of models from catalog, with enable/disable toggle per model (via `DISABLED_MODELS`). Collapsible.
-- **Quick Settings** (expanded by default) — Automatic Refresh button group (30s/1m/2m/5m=298s), Wallpaper selector (None/Bing/Wallhaven/FreeGen), FreeGen prompt + Generate button, Context Compression (Sleev) toggle with info tooltip, Git Guard toggle with info tooltip.
+- **Quick Settings** (expanded by default) — Automatic Refresh button group (30s/1m/2m/5m=298s), Wallpaper selector (None/Bing/Wallhaven/FreeGen), FreeGen prompt + Generate button, Context Compression (Sleev) toggle with info tooltip, Vision Handoff toggle with info tooltip, Handoff Cache toggle (shown only when Vision Handoff is enabled) with cache stats line.
 - **Quick Actions** (collapsed) — Check Health, Test Connection, Manual Refresh, Restart Proxy.
 - **Environment** (collapsed) — Runtime, Port, Started At.
-- **Key Management Modal** — Add/edit/delete API keys with inline editing. Shows account info with User ID (click-to-reveal masking, copy-to-clipboard button). No email field.
-- **Sleev Integration** — Toggle in Quick Settings (not Environment). When sign-in is required, shows `npx sleev auth login` command with copy button. Polls `/api/sleev` for status updates every 3s.
+- **Key Management Modal** — Add/edit/delete API keys with inline editing. Shows account info with User ID (click-to-reveal masking, copy-to-clipboard button).
+- **Sleev Integration** — Toggle in Quick Settings. When sign-in is required, shows `npx sleev auth login` command with copy button. Polls `/api/sleev` for status updates every 3s.
 - **Glass UI** — Procedural SVG filter-based glassmorphism (`feDisplacementMap`, `feColorMatrix`, `feGaussianBlur`). Liquid glass effect computed per-card via `initLiquidGlass()`.
-- **Wallpaper Loader** — Transparent overlay (`background:transparent`) shown until wallpaper is loaded, then fades out. `body` CSS does not set `background-color` (server-injected `<style>` in `<head>` handles it).
-- **Auto-refresh** — Status every 15s, usage via configurable interval (default 30s, set in Quick Settings), concurrency every 15s. Dashboard always fetches usage and concurrency with `?fresh=1` to bypass server-side cache.
-- **No Test Chat** — Removed entirely. No model selector or streaming chat panel.
+- **Wallpaper Loader** — Transparent overlay shown until wallpaper is loaded, then fades out. `body` CSS does not set `background-color` (server-injected `<style>` in `<head>` handles it).
+- **Auto-refresh** — Status every 15s, usage via configurable interval (default 30s, set in Quick Settings), concurrency every 15s. Dashboard always fetches usage and concurrency with `?fresh=1` to bypass server-side cache. Usage history refreshes every 5 minutes.
+- **Card Grid** — Stat cards use CSS grid with JS-driven equal-column layout (`layoutStatGrids()`) that picks the largest divisor of the item count keeping each column at least 120px wide, ensuring equal columns per row.
+- **No Test Chat** — Removed entirely.
 - **No i18n/Autotranslate** — All `data-i18n` attributes, `t()` function, translate overlay, and LOCALE config removed from dashboard. The i18n catalog and `/api/i18n` endpoint still exist in proxy.js but are unused by the dashboard.
 
-### 16. Dashboard ↔ UMANS API Data Flow
+### 15. Dashboard ↔ UMANS API Data Flow
 
 The dashboard does not talk to UMANS directly. All UMANS data passes through the proxy endpoints below, which cache responses for 5 minutes and forward the raw UMANS payload.
 
 | Dashboard source | Proxy endpoint | Upstream call | Purpose |
 |---|---|---|---|
-| Requests / Throttled / Cached % / Start Time / Tokens In / Tokens Out (5-hour Window card) | `GET /api/umans/usage` | Upstream usage API | Current usage window; throttled is proxy-side 503 queue-full count |
+| Requests / Throttled / Cached % / Error % / Start Time / Tokens In / Tokens Out (5-hour Window card) | `GET /api/umans/usage` | Upstream usage API | Current usage window; throttled is proxy-side 503 queue-full count |
 | Concurrency card (Active / Queued / Limit / Burst / User ID) | `GET /api/umans/concurrency` | Upstream usage API (via `fetchConcurrency`) | Active sessions, soft limit, hard cap, queue depth |
+| Usage History card (chart + table) | `GET /api/umans/usage-history` | Upstream `/usage/history` | Per-bucket, per-model usage breakdown with tokens_cached_read |
 
 #### `/api/umans/usage` response shape
 
@@ -281,6 +266,7 @@ The dashboard derives:
 - `Requests = usage.requests_in_window`
 - `Throttled = throttled` (proxy-side count of 503 queue-full rejections, reset when usage window changes)
 - `Cached % = (usage.tokens_cached / usage.tokens_in) * 100`
+- `Error %` — computed from all buckets in Tokens mode (unfiltered), or from visible statuses in Requests mode
 - `Start Time = window.started_at`
 - `Tokens In = usage.tokens_in`
 - `Tokens Out = usage.tokens_out`
@@ -288,7 +274,7 @@ The dashboard derives:
 ## Startup Sequence
 
 1. `loadConfig()` — Load `.config/config.json` + env var overrides (including `KEYS` array)
-2. `ResponseCache` — Init with config values
+2. `imageHandoffCache.resize(50, config.visionHandoffCacheTtl)` — Configure handoff cache TTL
 3. `KeyPool` — Init from `config.keys` or single default key
 4. `UpstreamClient` — Init HTTP client
 5. `validateApiKey()` — Verify via `/v1/models/info`, populates `modelDisplayNameMap` + `modelInfoMap`
@@ -335,6 +321,7 @@ node proxy.js                  # Start proxy
 curl http://localhost:8084/healthz
 curl http://localhost:8084/v1/models
 curl http://localhost:8084/api/umans/usage
+curl http://localhost:8084/api/umans/usage-history
 curl http://localhost:8084/api/umans/concurrency
 curl http://localhost:8084/api/sleev
 ```
@@ -345,7 +332,7 @@ Zero external npm dependencies — uses only Node.js built-in modules: `fs`, `pa
 
 ## Data Storage
 
-- `.config/config.json` — Full proxy config including API keys, `KEYS` array (persisted key pool), enabled/disabled models, display names, `OVERRIDE_CONCURRENCY`, `MAX_IMAGES`, `SHELL_TOOL_GUARD`, `wallpaperSource`, `FREEGEN_PROMPT`, `SLEEV_ENABLED`, `VISION_HANDOFF_ENABLED`, `VISION_HANDOFF_MODEL`, `VISION_HANDOFF_PROMPT`, `DISABLED_MODELS`
+- `.config/config.json` — Full proxy config including API keys, `KEYS` array (persisted key pool), enabled/disabled models, display names, `OVERRIDE_CONCURRENCY`, `MAX_IMAGES`, `wallpaperSource`, `FREEGEN_PROMPT`, `SLEEV_ENABLED`, `VISION_HANDOFF_ENABLED`, `VISION_HANDOFF_MODEL`, `VISION_HANDOFF_PROMPT`, `VISION_HANDOFF_CACHE_ENABLED`, `VISION_HANDOFF_CACHE_TTL`, `DISABLED_MODELS`
 - `.cache/wallpaper.jpg` — Cached Bing wallpaper
 - `.cache/wallpaper-haven.jpg` — Cached Wallhaven wallpaper
 - `.cache/wallpaper-freegen.jpg` — Current FreeGen AI wallpaper
@@ -361,9 +348,16 @@ Zero external npm dependencies — uses only Node.js built-in modules: `fs`, `pa
 - Each completed request calls `processQueue()` via `.finally()`
 - Both OpenAI (`/v1/chat/completions`) and Anthropic (`/v1/messages`) paths participate in the same queue.
 
+## Removed Features
+
+The following features have been completely removed from the codebase:
+
+- **Git Guard / Shell-Tool Guard** — Removed entirely. No `isGitCommand`, `sanitizeShellToolCall`, `sanitizeChatCompletionResponse`, or `sanitizeSseResponse` functions. SSE streaming always pipes directly to the client. No `SHELL_TOOL_GUARD` config key.
+- **General Response Cache** — Removed entirely. No `ResponseCache` class, `cacheKey()`, or `responseCache` instance. No `CACHE_ENABLED`, `CACHE_TTL`, `CACHE_MAX_SIZE` config keys. No `/api/cache` endpoint. No cache stats in `/healthz` or the dashboard. The only caching that remains is the `ImageHandoffCache` for vision handoff (see section 3b).
+
 ## Notes for Opencode Agents
 
-When working on UMANS-Proxy through opencode, keep the following in mind to avoid common tool failures.
+When working on UMANS-Dash through opencode, keep the following in mind to avoid common tool failures.
 
 ### Edit tool / exact replacements
 
